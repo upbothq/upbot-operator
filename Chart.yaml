@@ -1,6 +1,6 @@
 apiVersion: v2
-name: operator-v2
-description: A Helm chart to distribute the project operator-v2
+name: upbot-operator
+description: A Helm chart to distribute the project upbot-operator
 type: application
 version: 0.2.1
 appVersion: "0.2.1"

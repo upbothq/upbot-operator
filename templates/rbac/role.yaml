@@ -5,7 +5,7 @@ kind: ClusterRole
 metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
-  name: operator-v2-manager-role
+  name: upbot-operator-manager-role
 rules:
 - apiGroups:
   - monitoring.upbot.app

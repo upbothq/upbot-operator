@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
   namespace: {{ .Release.Namespace }}
-  name: operator-v2-leader-election-role
+  name: upbot-operator-leader-election-role
 rules:
 - apiGroups:
   - ""
