@@ -3,13 +3,13 @@ entries:
   operator-v2:
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2025-10-13T11:50:01.996944207Z"
+    created: "2025-10-13T21:20:50.13313188Z"
     description: A Helm chart to distribute the project operator-v2
-    digest: f3e1a63351c78c151aceb3a42260e7fd3fe4a405350481189d00ff4421912b77
+    digest: ed251fa8cc51679064006268cc0b83a1fd30a8e6a6d6c56e58e6efeef78ab141
     icon: https://example.com/icon.png
     name: operator-v2
     type: application
     urls:
     - https://upbothq.github.io/upbot-operator/operator-v2-0.1.0.tgz
     version: 0.1.0
-generated: "2025-10-13T11:50:01.996353824Z"
+generated: "2025-10-13T21:20:50.131546614Z"

@@ -1,0 +1,36 @@
+1. To configure the Upbot API token, you have two options:
+
+   Option A: Use an existing secret (recommended)
+   kubectl create secret generic upbot-api-key --from-literal=token=your-api-key-here
+   
+   Then install/upgrade with:
+   helm install upbot-operator . --set upbot.apiKeyExistingSecret=upbot-api-key
+
+   Option B: Set the API key directly (not recommended for production)
+   helm install upbot-operator . --set upbot.apiKey=your-api-key-here
+
+2. Get the status of the operator deployment:
+   kubectl get deployment {{ include "chart.fullname" . }}-controller-manager -n {{ .Release.Namespace }}
+
+3. Check the logs of the operator:
+   kubectl logs -l control-plane=controller-manager -n {{ .Release.Namespace }}
+
+4. Create a Monitor resource:
+   kubectl apply -f - <<EOF
+   apiVersion: monitoring.upbot.app/v1alpha1
+   kind: Monitor
+   metadata:
+     name: example-monitor
+   spec:
+     type: "http"
+     target: "https://example.com"
+     interval: "5m"
+   EOF
+
+5. Ingress Watcher (optional):
+   {{- if .Values.ingressWatcher.enable }}
+   ✅ Ingress Watcher is ENABLED - Monitor resources will be automatically created for Ingress resources
+   {{- else }}
+   ❌ Ingress Watcher is DISABLED - To enable automatic Monitor creation for Ingress resources:
+   helm upgrade {{ .Release.Name }} . --set ingressWatcher.enable=true
+   {{- end }}
