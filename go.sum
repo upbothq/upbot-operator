@@ -130,6 +130,14 @@ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+github.com/upbothq/upbot-go-sdk v0.0.1 h1:CV44ZH+EU0BQ2GN8rVILWsRXSoTxHud7BGF2lOGroek=
+github.com/upbothq/upbot-go-sdk v0.0.1/go.mod h1:52xLu0orfztng94TGbUOGmWbHlbpkk0R2XATzkiCAnU=
+github.com/upbothq/upbot-go-sdk v0.0.2 h1:PMu8afjJZHIlyJsJce+pmB7TINWr0s5NruYRYFbfOJs=
+github.com/upbothq/upbot-go-sdk v0.0.2/go.mod h1:52xLu0orfztng94TGbUOGmWbHlbpkk0R2XATzkiCAnU=
+github.com/upbothq/upbot-sdk v0.0.1 h1:e6uAUB4LOGzgOEJIjS1RziU/xCXN81bhyFdNK9lR5oA=
+github.com/upbothq/upbot-sdk v0.0.1/go.mod h1:il9LbTk3ABXLZPVCRSf1JKlS1mDR72UUpyyH9qM7fpw=
+github.com/upbothq/upbot-sdk v0.0.2 h1:jhg6yjLky6CdrrFhJW03kQ6jMRPWxjIijiAIMDvO/LI=
+github.com/upbothq/upbot-sdk v0.0.2/go.mod h1:il9LbTk3ABXLZPVCRSf1JKlS1mDR72UUpyyH9qM7fpw=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

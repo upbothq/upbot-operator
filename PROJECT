@@ -6,6 +6,18 @@ cliVersion: 4.7.0
 domain: upbot.app
 layout:
 - go.kubebuilder.io/v4
+plugins:
+  helm.kubebuilder.io/v1-alpha: {}
 projectName: operator-v2
 repo: github.com/upbothq/operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: upbot.app
+  group: monitoring
+  kind: Monitor
+  path: github.com/upbothq/operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

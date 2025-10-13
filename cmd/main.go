@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -26,6 +27,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	upbot "github.com/upbothq/upbot-go-sdk"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -36,6 +38,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	monitoringv1alpha1 "github.com/upbothq/operator/api/v1alpha1"
+	"github.com/upbothq/operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -47,6 +52,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
+	utilruntime.Must(monitoringv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -198,7 +204,37 @@ func main() {
 		os.Exit(1)
 	}
 
+	token := os.Getenv("UPBOT_TOKEN")
+	if token == "" {
+		setupLog.Error(nil, "UPBOT_TOKEN not set")
+		os.Exit(1)
+	}
+
+	cfg := upbot.NewConfiguration()
+	cfg.AddDefaultHeader("Authorization", fmt.Sprintf("Bearer %s", token))
+	apiClient := upbot.NewAPIClient(cfg)
+	if err != nil {
+		setupLog.Error(err, "unable to create Upbot API client")
+		os.Exit(1)
+	}
+
+	if err := (&controller.MonitorReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		ApiClient: apiClient,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Monitor")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
+
+	if err := (&controller.IngressWatcherReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "IngressWatcher")
+		os.Exit(1)
+	}
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")
