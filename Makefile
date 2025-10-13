@@ -1,5 +1,13 @@
+# Version management
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+REGISTRY ?= ghcr.io/upbothq
+IMAGE_NAME ?= upbot-operator
+
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= $(REGISTRY)/$(IMAGE_NAME):$(VERSION)
+IMG_LATEST ?= $(REGISTRY)/$(IMAGE_NAME):latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -23,6 +31,34 @@ SHELL = /usr/bin/env bash -o pipefail
 all: build
 
 ##@ General
+
+.PHONY: version
+version: ## Display current version information
+	@echo "Version: $(VERSION)"
+	@echo "Git Commit: $(GIT_COMMIT)"
+	@echo "Build Date: $(BUILD_DATE)"
+	@echo "Image: $(IMG)"
+
+.PHONY: version-bump-patch
+version-bump-patch: ## Bump patch version (x.y.z -> x.y.z+1)
+	@current=$$(cat VERSION); \
+	new=$$(echo $$current | awk -F. '{$$NF = $$NF + 1;} 1' | sed 's/ /./g'); \
+	echo $$new > VERSION; \
+	echo "Version bumped from $$current to $$new"
+
+.PHONY: version-bump-minor
+version-bump-minor: ## Bump minor version (x.y.z -> x.y+1.0)
+	@current=$$(cat VERSION); \
+	new=$$(echo $$current | awk -F. '{$$(NF-1) = $$(NF-1) + 1; $$NF = 0;} 1' | sed 's/ /./g'); \
+	echo $$new > VERSION; \
+	echo "Version bumped from $$current to $$new"
+
+.PHONY: version-bump-major
+version-bump-major: ## Bump major version (x.y.z -> x+1.0.0)
+	@current=$$(cat VERSION); \
+	new=$$(echo $$current | awk -F. '{$$1 = $$1 + 1; $$2 = 0; $$3 = 0;} 1' | sed 's/ /./g'); \
+	echo $$new > VERSION; \
+	echo "Version bumped from $$current to $$new"
 
 # The help target prints out all targets with their descriptions organized
 # beneath their categories. The categories are represented by '##@' and the
@@ -117,11 +153,32 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--label "org.opencontainers.image.title=upbot-operator" \
+		--label "org.opencontainers.image.description=Upbot Kubernetes Operator" \
+		--label "org.opencontainers.image.version=$(VERSION)" \
+		--label "org.opencontainers.image.revision=$(GIT_COMMIT)" \
+		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
+		--label "org.opencontainers.image.source=https://github.com/upbothq/upbot-operator" \
+		-t ${IMG} .
+
+.PHONY: docker-build-and-tag
+docker-build-and-tag: docker-build ## Build and tag docker image with version and latest tags
+	@if [ "$(VERSION)" != "dev" ]; then \
+		$(CONTAINER_TOOL) tag ${IMG} ${IMG_LATEST}; \
+		echo "Tagged $(IMG) as $(IMG_LATEST)"; \
+	fi
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+	@if [ "$(VERSION)" != "dev" ] && $(CONTAINER_TOOL) images -q ${IMG_LATEST} >/dev/null 2>&1; then \
+		$(CONTAINER_TOOL) push ${IMG_LATEST}; \
+		echo "Pushed $(IMG_LATEST)"; \
+	fi
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -147,6 +204,16 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 ##@ Deployment
+
+.PHONY: update-helm-chart
+update-helm-chart: ## Update Helm chart with current version
+	@if [ -f "dist/chart/Chart.yaml" ]; then \
+		sed -i "s/^version:.*/version: $(VERSION)/" dist/chart/Chart.yaml; \
+		sed -i "s/^appVersion:.*/appVersion: \"$(VERSION)\"/" dist/chart/Chart.yaml; \
+		echo "Updated Helm chart to version $(VERSION)"; \
+	else \
+		echo "Warning: dist/chart/Chart.yaml not found"; \
+	fi
 
 ifndef ignore-not-found
   ignore-not-found = false

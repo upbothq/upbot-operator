@@ -21,3 +21,21 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.1.6
+
+      - name: Check version consistency
+        run: |
+          VERSION=$(cat VERSION)
+          CHART_VERSION=$(grep '^version:' dist/chart/Chart.yaml | cut -d' ' -f2)
+          CHART_APP_VERSION=$(grep '^appVersion:' dist/chart/Chart.yaml | cut -d' ' -f2 | tr -d '"')
+          
+          echo "VERSION file: $VERSION"
+          echo "Chart version: $CHART_VERSION"
+          echo "Chart appVersion: $CHART_APP_VERSION"
+          
+          if [[ "$VERSION" != "$CHART_VERSION" ]] || [[ "$VERSION" != "$CHART_APP_VERSION" ]]; then
+            echo "❌ Version mismatch detected!"
+            echo "Please run: make update-helm-chart"
+            exit 1
+          else
+            echo "✅ All versions are consistent"
+          fi
