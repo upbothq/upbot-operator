@@ -1,0 +1,32 @@
+name: Publish Helm Chart
+
+on:
+  push:
+    branches:
+      - main  
+    paths:
+      - 'dist/chart/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
+        run: |
+          cd dist/chart
+          helm package .
+          helm repo index . --url https://<user>.github.io/<repo>/dist/chart
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v6
+        with:
+          github_token: ${{ secrets.PAT_TOKEN }}
+          publish_dir: ./dist/chart
+          publish_branch: gh-pages
