@@ -77,7 +77,11 @@ Triggers on:
 - Pull requests to `main`
 - Git tags starting with `v`
 
-Builds multi-architecture images and pushes to GitHub Container Registry.
+**Optimized Build Strategy:**
+- Uses native ARM64 runners (`ubuntu-24.04-arm64`) for ARM64 builds
+- Uses standard AMD64 runners (`ubuntu-latest`) for AMD64 builds
+- Builds in parallel for faster execution
+- Creates multi-architecture manifests automatically
 
 ### Release (`release.yml`)
 
@@ -85,11 +89,15 @@ Triggers on:
 - Git tags starting with `v`
 - Manual workflow dispatch
 
+**Optimized Release Process:**
+1. **Parallel Build Phase:** Builds Docker images on native runners (AMD64 + ARM64)
+2. **Release Phase:** Creates manifests, packages Helm chart, and publishes release
+
 Creates a full release with:
-- Docker images
-- Helm chart
-- GitHub release with assets
-- Updated documentation
+- Multi-architecture Docker images (native builds)
+- Helm chart with proper versioning
+- GitHub release with installation manifests
+- Updated GitHub Pages documentation
 
 ### Version Bump (`version-bump.yml`)
 
@@ -242,6 +250,26 @@ If Docker build fails with missing version info:
 make docker-build  # instead of docker build directly
 ```
 
+## Build Performance Optimization
+
+### Native ARM64 Builds
+
+The workflows are optimized to use native ARM64 runners when available:
+
+- **AMD64 builds:** `ubuntu-latest` (fast, native)
+- **ARM64 builds:** `ubuntu-24.04-arm64` (fast, native)
+- **Parallel execution:** Both architectures build simultaneously
+
+### Performance Comparison
+
+| Architecture | Build Time | Notes |
+|--------------|------------|-------|
+| **AMD64** | ~3-5 minutes | Native runner (`ubuntu-latest`) |
+| **ARM64** | ~3-5 minutes | Native runner (`ubuntu-24.04-arm64`) |
+| **Total** | ~5-7 minutes | Parallel execution |
+
+
+
 ## Best Practices
 
 1. **Always use make targets** instead of direct docker/helm commands
@@ -250,3 +278,4 @@ make docker-build  # instead of docker build directly
 4. **Keep VERSION file in sync** with Helm chart
 5. **Create descriptive release notes** for GitHub releases
 6. **Test the full release process** in a fork first
+7. **Monitor build times** and use native runners when possible
