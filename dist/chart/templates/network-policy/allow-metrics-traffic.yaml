@@ -13,7 +13,7 @@ spec:
   podSelector:
     matchLabels:
       control-plane: controller-manager
-      app.kubernetes.io/name: operator-v2
+      app.kubernetes.io/name: upbot-operator
   policyTypes:
     - Ingress
   ingress:

@@ -2,7 +2,7 @@ apiVersion: monitoring.upbot.app/v1alpha1
 kind: Monitor
 metadata:
   labels:
-    app.kubernetes.io/name: operator-v2
+    app.kubernetes.io/name: upbot-operator
     app.kubernetes.io/managed-by: kustomize
   name: monitor-sample
 spec:

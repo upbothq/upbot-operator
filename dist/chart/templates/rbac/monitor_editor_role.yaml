@@ -1,5 +1,5 @@
 {{- if .Values.rbac.enable }}
-# This rule is not used by the project operator-v2 itself.
+# This rule is not used by the project upbot-operator itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
 # Grants permissions to create, update, and delete resources within the monitoring.upbot.app.
