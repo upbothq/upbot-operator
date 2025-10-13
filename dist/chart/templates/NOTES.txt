@@ -28,7 +28,7 @@
    EOF
 
 5. Ingress Watcher (optional):
-   {{- if .Values.ingressWatcher.enable }}
+   {{- if .Values.upbot.ingressWatcher.enable }}
    ✅ Ingress Watcher is ENABLED - Monitor resources will be automatically created for Ingress resources
    {{- else }}
    ❌ Ingress Watcher is DISABLED - To enable automatic Monitor creation for Ingress resources:
