@@ -23,7 +23,7 @@ jobs:
         run: |
           cd dist/chart
           helm package .
-          helm repo index . --url https://<user>.github.io/<repo>/dist/chart
+          helm repo index . --url https://upbothq.github.io/upbot-operator/dist/chart
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
