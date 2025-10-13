@@ -2,14 +2,14 @@ apiVersion: v1
 entries:
   upbot-operator:
   - apiVersion: v2
-    appVersion: 0.0.2
-    created: "2025-10-13T22:28:25.009856174Z"
+    appVersion: 0.0.3
+    created: "2025-10-13T22:31:49.160419044Z"
     description: A Helm chart to distribute the project upbot-operator
-    digest: b867a1391ddb2e55d1f919d8666b81fc593f8e22cd9d96cf38e1c589a8ba6401
+    digest: b3bc772fbbc28b3e6053b4ac714384736d2d9352719f894eb4c850f5d9f9b371
     icon: https://example.com/icon.png
     name: upbot-operator
     type: application
     urls:
-    - https://upbothq.github.io/upbot-operator/upbot-operator-0.0.2.tgz
-    version: 0.0.2
-generated: "2025-10-13T22:28:25.009201371Z"
+    - https://upbothq.github.io/upbot-operator/upbot-operator-0.0.3.tgz
+    version: 0.0.3
+generated: "2025-10-13T22:31:49.159689472Z"
