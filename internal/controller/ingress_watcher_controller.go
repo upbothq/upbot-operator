@@ -16,7 +16,8 @@ import (
 
 type IngressWatcherReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Interval string
 }
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
@@ -67,7 +68,10 @@ func (r *IngressWatcherReconciler) createMonitorFromIngress(ctx context.Context,
 		return ctrl.Result{}, err
 	}
 
-	interval := "30"
+	interval := r.Interval
+	if interval == "" {
+		interval = "30" // default fallback
+	}
 
 	monitor := &monitoringv1alpha1.Monitor{
 		ObjectMeta: metav1.ObjectMeta{

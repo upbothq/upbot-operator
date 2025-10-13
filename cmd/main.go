@@ -62,6 +62,8 @@ func main() {
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection bool
+	var enableIngressWatcher bool
+	var ingressWatcherInterval string
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -72,6 +74,10 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&enableIngressWatcher, "enable-ingress-watcher", false,
+		"Enable the Ingress Watcher controller that automatically creates Monitor resources for Ingress resources.")
+	flag.StringVar(&ingressWatcherInterval, "ingress-watcher-interval", "30",
+		"Default interval for monitors created by the Ingress Watcher (e.g., '30', '60', '300').")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
@@ -228,12 +234,18 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
-	if err := (&controller.IngressWatcherReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "IngressWatcher")
-		os.Exit(1)
+	if enableIngressWatcher {
+		setupLog.Info("Enabling Ingress Watcher controller", "interval", ingressWatcherInterval)
+		if err := (&controller.IngressWatcherReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Interval: ingressWatcherInterval,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "IngressWatcher")
+			os.Exit(1)
+		}
+	} else {
+		setupLog.Info("Ingress Watcher controller is disabled")
 	}
 
 	if metricsCertWatcher != nil {

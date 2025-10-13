@@ -31,6 +31,10 @@ spec:
             {{- range .Values.controllerManager.container.args }}
             - {{ . }}
             {{- end }}
+            {{- if .Values.upbot.ingressWatcher.enable }}
+            - --enable-ingress-watcher
+            - --ingress-watcher-interval={{ .Values.upbot.ingressWatcher.interval }}
+            {{- end }}
           command:
             - /manager
           image: {{ .Values.controllerManager.container.image.repository }}:{{ .Values.controllerManager.container.image.tag }}

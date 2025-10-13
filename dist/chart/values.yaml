@@ -75,6 +75,7 @@ certmanager:
 networkPolicy:
   enable: false
 
+
 # [UPBOT]: Configuration for Upbot API integration
 upbot:
   # Name of existing secret containing the Upbot API key
@@ -85,4 +86,14 @@ upbot:
   # Alternative: directly specify the API key (not recommended for production)
   # This will create a secret automatically
   # apiKey: "your-api-key-here"
-  
+
+  # [INGRESS WATCHER]: Configuration for automatic Monitor creation from Ingress resources
+  ingressWatcher:
+    # Set to true to enable automatic Monitor creation for Ingress resources
+    # When enabled, the operator will automatically create Monitor resources for
+    # every Ingress resource in the cluster. The monitor will use:
+    # - type: "http"
+    # - target: extracted from the first Ingress rule (https://host or http://host)
+    # - interval: "30" (30 seconds)
+    enable: false
+    interval: "60"
