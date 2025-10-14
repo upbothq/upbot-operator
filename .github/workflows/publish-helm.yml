@@ -32,7 +32,20 @@ jobs:
           cd dist/chart
           VERSION=$(cat ../../VERSION)
           helm package . --version $VERSION --app-version $VERSION
-          helm repo index . --url https://upbothq.github.io/upbot-operator/ --merge index.yaml
+
+      - name: Upload Helm chart to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.PAT_TOKEN }}
+          file: dist/chart/upbot-operator-$VERSION.tgz
+          asset_name: upbot-operator-$VERSION.tgz
+          tag: ${{ github.ref }}
+          overwrite: true
+
+      - name: Update Helm repo index
+        run: |
+          cd dist/chart
+          helm repo index . --url https://github.com/${{ github.repository }}/releases/download --merge index.yaml
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
