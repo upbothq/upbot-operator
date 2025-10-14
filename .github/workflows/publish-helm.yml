@@ -21,6 +21,12 @@ jobs:
           VERSION=$(cat VERSION)
           make update-helm-chart VERSION=$VERSION
 
+      - name: Fetch gh-pages index.yaml
+        run: |
+          git fetch origin gh-pages
+          mkdir -p dist/chart
+          git show origin/gh-pages:index.yaml > dist/chart/index.yaml || true
+
       - name: Package Helm chart
         run: |
           cd dist/chart
