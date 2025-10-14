@@ -46,7 +46,7 @@ jobs:
       - name: Update Helm repo index
         run: |
           cd dist/chart
-          helm repo index . --url https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }} --merge index.yaml
+          helm repo index . --url https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }} --merge index.yaml
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
