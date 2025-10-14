@@ -63,7 +63,7 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: controller:latest
+        image: ghcr.io/upbothq/upbot-operator:v{{ .Chart.AppVersion }}
         imagePullPolicy: Never # TODO(user): Change to "IfNotPresent" or "Always" in production.
         name: manager
         ports: []
