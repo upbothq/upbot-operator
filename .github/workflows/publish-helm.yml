@@ -1,12 +1,8 @@
 name: Publish Helm Chart
 
 on:
-  push:
-    branches:
-      - main  
-    paths:
-      - 'dist/chart/**'
-      - 'VERSION'
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -30,7 +26,7 @@ jobs:
           cd dist/chart
           VERSION=$(cat ../../VERSION)
           helm package . --version $VERSION --app-version $VERSION
-          helm repo index . --url https://upbothq.github.io/upbot-operator/
+          helm repo index . --url https://upbothq.github.io/upbot-operator/ --merge index.yaml
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
