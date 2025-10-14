@@ -32,13 +32,14 @@ jobs:
           cd dist/chart
           VERSION=$(cat ../../VERSION)
           helm package . --version $VERSION --app-version $VERSION
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Upload Helm chart to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.PAT_TOKEN }}
-          file: dist/chart/upbot-operator-$VERSION.tgz
-          asset_name: upbot-operator-$VERSION.tgz
+          file: dist/chart/upbot-operator-${{ env.VERSION }}.tgz
+          asset_name: upbot-operator-${{ env.VERSION }}.tgz
           tag: ${{ github.ref }}
           overwrite: true
 
