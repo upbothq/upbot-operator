@@ -40,6 +40,13 @@ func (r *IngressWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	// Check if monitoring is disabled for this ingress
+	if disabled, exists := ingress.Annotations["upbot.app/monitor"]; exists && (disabled == "false" || disabled == "disabled") {
+		logger.Info("Monitoring disabled for this ingress via annotation", "ingress", ingress.Name)
+		// Check if there's an existing monitor that should be cleaned up
+		return r.handleMonitorCleanupForDisabledIngress(ctx, req.NamespacedName)
+	}
+
 	// Check if the Monitor already exists, if not create a new one
 
 	monitorName := req.NamespacedName
@@ -69,8 +76,11 @@ func (r *IngressWatcherReconciler) createMonitorFromIngress(ctx context.Context,
 		return ctrl.Result{}, err
 	}
 
+	// Check for custom interval annotation first, then fall back to global setting
 	interval := r.Interval
-	if interval == "" {
+	if customInterval, exists := ingress.Annotations["upbot.app/interval"]; exists && customInterval != "" {
+		interval = customInterval
+	} else if interval == "" {
 		interval = "30" // default fallback
 	}
 
@@ -126,9 +136,11 @@ func (r *IngressWatcherReconciler) updateMonitorIfNeeded(ctx context.Context, mo
 		return ctrl.Result{}, err
 	}
 	
-	// Get the expected interval
+	// Get the expected interval (check for custom annotation first)
 	expectedInterval := r.Interval
-	if expectedInterval == "" {
+	if customInterval, exists := ingress.Annotations["upbot.app/interval"]; exists && customInterval != "" {
+		expectedInterval = customInterval
+	} else if expectedInterval == "" {
 		expectedInterval = "30" // default fallback
 	}
 	
@@ -208,6 +220,41 @@ func (r *IngressWatcherReconciler) handleIngressDeletion(ctx context.Context, na
 	return ctrl.Result{}, nil
 }
 
+func (r *IngressWatcherReconciler) handleMonitorCleanupForDisabledIngress(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	
+	// Try to find the monitor associated with this ingress
+	var monitor monitoringv1alpha1.Monitor
+	err := r.Get(ctx, namespacedName, &monitor)
+	
+	if errors.IsNotFound(err) {
+		// No monitor found, nothing to clean up
+		logger.Info("No monitor found for disabled ingress", "ingress", namespacedName)
+		return ctrl.Result{}, nil
+	}
+	
+	if err != nil {
+		logger.Error(err, "Failed to get monitor for disabled ingress", "ingress", namespacedName)
+		return ctrl.Result{}, err
+	}
+	
+	// Check if this monitor was created by the ingress watcher
+	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
+		logger.Info("Monitor not created by ingress watcher, not cleaning up", "monitor", monitor.Name)
+		return ctrl.Result{}, nil
+	}
+	
+	// Delete the monitor since monitoring is disabled
+	logger.Info("Deleting monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
+	if err := r.Delete(ctx, &monitor); err != nil {
+		logger.Error(err, "Failed to delete monitor for disabled ingress", "monitor", monitor.Name)
+		return ctrl.Result{}, err
+	}
+	
+	logger.Info("Successfully deleted monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
+	return ctrl.Result{}, nil
+}
+
 func (r *IngressWatcherReconciler) getTargetFromIngress(ingress *networkingv1.Ingress) (string, error) {
 	if len(ingress.Spec.Rules) == 0 {
 		return "", fmt.Errorf("no rules found in Ingress")
@@ -223,7 +270,23 @@ func (r *IngressWatcherReconciler) getTargetFromIngress(ingress *networkingv1.In
 		scheme = "http"
 	}
 
-	return fmt.Sprintf("%s://%s", scheme, rule.Host), nil
+	// Start with base URL
+	target := fmt.Sprintf("%s://%s", scheme, rule.Host)
+	
+	// Check for custom path annotation
+	if customPath, exists := ingress.Annotations["upbot.app/path"]; exists && customPath != "" {
+		// Clean up the path - ensure it starts with / and handle trailing slashes
+		if customPath[0] != '/' {
+			customPath = "/" + customPath
+		}
+		// Remove trailing slash unless it's just "/"
+		if len(customPath) > 1 && customPath[len(customPath)-1] == '/' {
+			customPath = customPath[:len(customPath)-1]
+		}
+		target += customPath
+	}
+
+	return target, nil
 }
 
 func (r *IngressWatcherReconciler) SetupWithManager(mgr ctrl.Manager) error {
