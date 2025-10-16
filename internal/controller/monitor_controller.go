@@ -96,9 +96,7 @@ func (r *MonitorReconciler) handleCreateOrUpdate(ctx context.Context, monitor *m
 	// Check if monitor already exists in Upbot (has ExternalID)
 	if monitor.Status.ExternalID != "" {
 		logger.Info("Monitor already exists in Upbot", "externalID", monitor.Status.ExternalID)
-		// TODO: Add logic here to check if monitor needs to be updated
-		// For now, just return success to avoid infinite creation
-		return ctrl.Result{}, nil
+		return r.handleUpdate(ctx, monitor)
 	}
 
 	// Monitor doesn't exist in Upbot, create it
@@ -131,6 +129,44 @@ func (r *MonitorReconciler) handleCreateOrUpdate(ctx context.Context, monitor *m
 		logger.Info("Created monitor in Upbot and updated status", "externalID", *resp.Id)
 	}
 
+	return ctrl.Result{}, nil
+}
+
+func (r *MonitorReconciler) handleUpdate(ctx context.Context, monitor *monitoringv1alpha1.Monitor) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	// Perform optimistic update since there's no direct "get specific monitor" method in the SDK
+	logger.Info("Updating monitor in Upbot", "externalID", monitor.Status.ExternalID)
+
+	val := int32(0)
+	updateRequest := upbot.UpdateTheSpecifiedResourceInStorageRequest{
+		Name:       &monitor.Name,
+		Type:       &monitor.Spec.Type,
+		Target:     *upbot.NewNullableString(&monitor.Spec.Target),
+		Interval:   &monitor.Spec.Interval,
+		RetryCount: *upbot.NewNullableInt32(&val),
+	}
+
+	req := r.ApiClient.MonitorManagementAPI.UpdateTheSpecifiedResourceInStorage(ctx, monitor.Status.ExternalID)
+	_, err := req.UpdateTheSpecifiedResourceInStorageRequest(updateRequest).Execute()
+	if err != nil {
+		logger.Error(err, "Failed to update monitor in Upbot", "externalID", monitor.Status.ExternalID)
+
+		// Check if monitor was deleted externally by trying to parse the error
+		// This is a simplified approach - in production you might want more robust error handling
+		if httpErr, ok := err.(*upbot.GenericOpenAPIError); ok {
+			// If we can't update, it might be because the monitor was deleted externally
+			// For now, we'll log the error and continue
+			logger.Info("Update failed, monitor might have been deleted externally", "error", httpErr.Error())
+			// Optionally clear the external ID and recreate:
+			// monitor.Status.ExternalID = ""
+			// return ctrl.Result{Requeue: true}, r.Status().Update(ctx, monitor)
+		}
+
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Successfully updated monitor in Upbot", "externalID", monitor.Status.ExternalID)
 	return ctrl.Result{}, nil
 }
 
