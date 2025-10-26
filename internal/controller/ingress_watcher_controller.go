@@ -120,22 +120,26 @@ func (r *IngressWatcherReconciler) createMonitorFromIngress(ctx context.Context,
 
 func (r *IngressWatcherReconciler) updateMonitorIfNeeded(ctx context.Context, monitor *monitoringv1alpha1.Monitor, ingress *networkingv1.Ingress) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	
+
 	// Check if this monitor was created by the ingress watcher
 	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
 		logger.Info("Monitor not created by ingress watcher, skipping update", "monitor", monitor.Name)
 		return ctrl.Result{}, nil
 	}
 
+	logger.Info("Checking if monitor needs update", "monitor", monitor.Name, "ingress", ingress.Name)
+
 	needsUpdate := false
-	
+
 	// Get the current target from ingress
 	expectedTarget, err := r.getTargetFromIngress(ingress)
 	if err != nil {
 		logger.Error(err, "Failed to get target from Ingress", "ingress", ingress.Name)
 		return ctrl.Result{}, err
 	}
-	
+
+	logger.Info("Target comparison", "monitor", monitor.Name, "current", monitor.Spec.Target, "expected", expectedTarget)
+
 	// Get the expected interval (check for custom annotation first)
 	expectedInterval := r.Interval
 	if customInterval, exists := ingress.Annotations["upbot.app/interval"]; exists && customInterval != "" {
@@ -143,29 +147,32 @@ func (r *IngressWatcherReconciler) updateMonitorIfNeeded(ctx context.Context, mo
 	} else if expectedInterval == "" {
 		expectedInterval = "30" // default fallback
 	}
-	
+
+	logger.Info("Interval comparison", "monitor", monitor.Name, "current", monitor.Spec.Interval, "expected", expectedInterval)
+
 	// Check if target needs update
 	if monitor.Spec.Target != expectedTarget {
 		logger.Info("Target mismatch, updating monitor", "monitor", monitor.Name, "current", monitor.Spec.Target, "expected", expectedTarget)
 		monitor.Spec.Target = expectedTarget
 		needsUpdate = true
 	}
-	
+
 	// Check if interval needs update
 	if monitor.Spec.Interval != expectedInterval {
 		logger.Info("Interval mismatch, updating monitor", "monitor", monitor.Name, "current", monitor.Spec.Interval, "expected", expectedInterval)
 		monitor.Spec.Interval = expectedInterval
 		needsUpdate = true
 	}
-	
+
 	// Check if type needs update
 	if monitor.Spec.Type != "http" {
 		logger.Info("Type mismatch, updating monitor", "monitor", monitor.Name, "current", monitor.Spec.Type, "expected", "http")
 		monitor.Spec.Type = "http"
 		needsUpdate = true
 	}
-	
+
 	if needsUpdate {
+		logger.Info("Updating monitor", "monitor", monitor.Name, "needsUpdate", needsUpdate)
 		if err := r.Update(ctx, monitor); err != nil {
 			logger.Error(err, "Failed to update Monitor", "monitor", monitor.Name)
 			return ctrl.Result{}, err
@@ -174,83 +181,83 @@ func (r *IngressWatcherReconciler) updateMonitorIfNeeded(ctx context.Context, mo
 	} else {
 		logger.Info("Monitor is up to date", "monitor", monitor.Name)
 	}
-	
+
 	return ctrl.Result{}, nil
 }
 
 func (r *IngressWatcherReconciler) handleIngressDeletion(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	
+
 	// Try to find the monitor associated with this ingress
 	var monitor monitoringv1alpha1.Monitor
 	err := r.Get(ctx, namespacedName, &monitor)
-	
+
 	if errors.IsNotFound(err) {
 		// No monitor found, nothing to clean up
 		logger.Info("No associated monitor found for deleted ingress", "ingress", namespacedName)
 		return ctrl.Result{}, nil
 	}
-	
+
 	if err != nil {
 		logger.Error(err, "Failed to get monitor for deleted ingress", "ingress", namespacedName)
 		return ctrl.Result{}, err
 	}
-	
+
 	// Check if this monitor was created by the ingress watcher
 	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
 		logger.Info("Monitor not created by ingress watcher, not cleaning up", "monitor", monitor.Name)
 		return ctrl.Result{}, nil
 	}
-	
+
 	// Check if this monitor was created for this specific ingress
 	expectedSourceAnnotation := fmt.Sprintf("%s/%s", namespacedName.Namespace, namespacedName.Name)
 	if monitor.Annotations["upbot.app/source-ingress"] != expectedSourceAnnotation {
 		logger.Info("Monitor not associated with this ingress, not cleaning up", "monitor", monitor.Name, "expected", expectedSourceAnnotation, "actual", monitor.Annotations["upbot.app/source-ingress"])
 		return ctrl.Result{}, nil
 	}
-	
+
 	// Delete the monitor
 	logger.Info("Deleting monitor for deleted ingress", "monitor", monitor.Name, "ingress", namespacedName)
 	if err := r.Delete(ctx, &monitor); err != nil {
 		logger.Error(err, "Failed to delete monitor", "monitor", monitor.Name)
 		return ctrl.Result{}, err
 	}
-	
+
 	logger.Info("Successfully deleted monitor for deleted ingress", "monitor", monitor.Name, "ingress", namespacedName)
 	return ctrl.Result{}, nil
 }
 
 func (r *IngressWatcherReconciler) handleMonitorCleanupForDisabledIngress(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	
+
 	// Try to find the monitor associated with this ingress
 	var monitor monitoringv1alpha1.Monitor
 	err := r.Get(ctx, namespacedName, &monitor)
-	
+
 	if errors.IsNotFound(err) {
 		// No monitor found, nothing to clean up
 		logger.Info("No monitor found for disabled ingress", "ingress", namespacedName)
 		return ctrl.Result{}, nil
 	}
-	
+
 	if err != nil {
 		logger.Error(err, "Failed to get monitor for disabled ingress", "ingress", namespacedName)
 		return ctrl.Result{}, err
 	}
-	
+
 	// Check if this monitor was created by the ingress watcher
 	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
 		logger.Info("Monitor not created by ingress watcher, not cleaning up", "monitor", monitor.Name)
 		return ctrl.Result{}, nil
 	}
-	
+
 	// Delete the monitor since monitoring is disabled
 	logger.Info("Deleting monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
 	if err := r.Delete(ctx, &monitor); err != nil {
 		logger.Error(err, "Failed to delete monitor for disabled ingress", "monitor", monitor.Name)
 		return ctrl.Result{}, err
 	}
-	
+
 	logger.Info("Successfully deleted monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
 	return ctrl.Result{}, nil
 }
@@ -272,7 +279,7 @@ func (r *IngressWatcherReconciler) getTargetFromIngress(ingress *networkingv1.In
 
 	// Start with base URL
 	target := fmt.Sprintf("%s://%s", scheme, rule.Host)
-	
+
 	// Check for custom path annotation
 	if customPath, exists := ingress.Annotations["upbot.app/path"]; exists && customPath != "" {
 		// Clean up the path - ensure it starts with / and handle trailing slashes

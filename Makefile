@@ -6,7 +6,7 @@ REGISTRY ?= ghcr.io/upbothq
 IMAGE_NAME ?= upbot-operator
 
 # Image URL to use all building/pushing image targets
-IMG ?= $(REGISTRY)/$(IMAGE_NAME):$(VERSION)
+IMG ?= $(REGISTRY)/$(IMAGE_NAME):v$(VERSION)
 IMG_LATEST ?= $(REGISTRY)/$(IMAGE_NAME):latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -165,20 +165,9 @@ docker-build: ## Build docker image with the manager.
 		--label "org.opencontainers.image.source=https://github.com/upbothq/upbot-operator" \
 		-t ${IMG} .
 
-.PHONY: docker-build-and-tag
-docker-build-and-tag: docker-build ## Build and tag docker image with version and latest tags
-	@if [ "$(VERSION)" != "dev" ]; then \
-		$(CONTAINER_TOOL) tag ${IMG} ${IMG_LATEST}; \
-		echo "Tagged $(IMG) as $(IMG_LATEST)"; \
-	fi
-
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
-	@if [ "$(VERSION)" != "dev" ] && $(CONTAINER_TOOL) images -q ${IMG_LATEST} >/dev/null 2>&1; then \
-		$(CONTAINER_TOOL) push ${IMG_LATEST}; \
-		echo "Pushed $(IMG_LATEST)"; \
-	fi
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -288,6 +277,41 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
+
+##@ Release
+
+.PHONY: release
+release: ## Create a new release (tag, build, push, bump, Helm, GitHub release)
+	@set -e; \
+	current=$$(cat VERSION); \
+	echo ">>> Releasing version $$current"; \
+	echo ">>> Building Docker image"; \
+	$(MAKE) docker-buildx; \
+	echo ">>> Updating Helm chart"; \
+	$(MAKE) update-helm-chart; \
+	\
+	echo ">>> Committing release version"; \
+	git add VERSION dist/chart/Chart.yaml; \
+	git commit -m "chore(release): $$current"; \
+	git push origin HEAD; \
+	\
+	\
+	echo ">>> Creating Git tag v$$current"; \
+	git tag -a "v$$current" -m "Release v$$current"; \
+	git push origin HEAD --tags; \
+	\
+	echo ">>> Creating GitHub release"; \
+	if command -v gh >/dev/null 2>&1; then \
+		gh release create "v$$current" \
+			--title "v$$current" \
+			--notes "Automated release of Upbot Operator version $$current"; \
+	else \
+		echo "⚠️ GitHub CLI (gh) not installed. Skipping GitHub release."; \
+	fi; \
+	\
+	echo "✅ Release v$$current completed."
+
+
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
 # $2 - package url which can be installed
@@ -303,3 +327,4 @@ mv $(1) $(1)-$(3) ;\
 } ;\
 ln -sf $(1)-$(3) $(1)
 endef
+
