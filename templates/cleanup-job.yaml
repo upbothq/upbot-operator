@@ -152,14 +152,30 @@ spec:
               return 0
             fi
             
-            # Delete Monitor resources
+            # First, remove finalizers from all monitors to prevent hanging
+            log "Removing finalizers from Monitor resources..."
+            echo "$monitors" | grep -o '"namespace":"[^"]*","name":"[^"]*"' | while read -r monitor; do
+              namespace=$(echo "$monitor" | cut -d'"' -f4)
+              name=$(echo "$monitor" | cut -d'"' -f8)
+              
+              if [ -n "$namespace" ] && [ -n "$name" ]; then
+                log "Removing finalizers from Monitor: $namespace/$name"
+                kubectl patch monitor "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+              fi
+            done
+            
+            # Wait a moment for finalizer removal to process
+            sleep 2
+            
+            # Now delete Monitor resources (should be immediate since no finalizers)
+            log "Deleting Monitor resources..."
             echo "$monitors" | grep -o '"namespace":"[^"]*","name":"[^"]*"' | while read -r monitor; do
               namespace=$(echo "$monitor" | cut -d'"' -f4)
               name=$(echo "$monitor" | cut -d'"' -f8)
               
               if [ -n "$namespace" ] && [ -n "$name" ]; then
                 log "Deleting Monitor resource: $namespace/$name"
-                kubectl delete monitor "$name" -n "$namespace" --ignore-not-found=true
+                kubectl delete monitor "$name" -n "$namespace" --ignore-not-found=true --timeout=30s
                 if [ $? -eq 0 ]; then
                   log "Successfully deleted Monitor resource: $namespace/$name"
                 else
@@ -167,6 +183,16 @@ spec:
                 fi
               fi
             done
+            
+            # Also try to delete the CRD if no monitors remain
+            remaining=$(kubectl get monitors --all-namespaces -o json 2>/dev/null | grep -c '"name":' || echo "0")
+            if [ "$remaining" = "0" ]; then
+              log "All Monitor resources deleted, removing CRD..."
+              kubectl delete crd monitors.monitoring.upbot.app --ignore-not-found=true --timeout=30s 2>/dev/null || true
+              log "CRD cleanup completed"
+            else
+              log "WARNING: $remaining Monitor resources still remain, not deleting CRD"
+            fi
           }
           
           # Main cleanup process
@@ -176,23 +202,33 @@ spec:
             log "Running in DRY RUN mode - no actual deletions will be performed"
           fi
           
-          # Step 1: Cleanup monitors from Upbot API (so they don't recreate)
-          if [ "${CLEANUP_UPBOT_API:-true}" = "true" ]; then
-            log "Step 1: Cleaning up monitors from Upbot API..."
-            cleanup_upbot_monitors
-          else
-            log "Step 1: Skipping Upbot API cleanup (disabled)"
-          fi
+          cleanup_exit_code=0
           
-          # Step 2: Cleanup Kubernetes Monitor resources  
+          # Step 1: Cleanup Kubernetes Monitor resources first (to stop controller reconciliation)
           if [ "${CLEANUP_K8S_RESOURCES:-true}" = "true" ]; then
-            log "Step 2: Cleaning up Kubernetes Monitor resources..."
-            cleanup_k8s_monitors
+            log "Step 1: Cleaning up Kubernetes Monitor resources..."
+            cleanup_k8s_monitors || cleanup_exit_code=1
           else
-            log "Step 2: Skipping Kubernetes resource cleanup (disabled)"
+            log "Step 1: Skipping Kubernetes resource cleanup (disabled)"
           fi
           
-          log "=== Upbot Operator Cleanup Completed ==="
+          # Step 2: Cleanup monitors from Upbot API (external cleanup)
+          if [ "${CLEANUP_UPBOT_API:-true}" = "true" ]; then
+            log "Step 2: Cleaning up monitors from Upbot API..."
+            cleanup_upbot_monitors || cleanup_exit_code=1
+          else
+            log "Step 2: Skipping Upbot API cleanup (disabled)"
+          fi
+          
+          if [ $cleanup_exit_code -eq 0 ]; then
+            log "=== Upbot Operator Cleanup Completed Successfully ==="
+          else
+            log "=== Upbot Operator Cleanup Completed with Warnings ==="
+            log "Some cleanup operations may have failed, but this is non-fatal"
+          fi
+          
+          # Always exit successfully to not block Helm uninstall
+          exit 0
         resources:
           {{- toYaml .Values.cleanup.resources | nindent 10 }}
       {{- with .Values.cleanup.nodeSelector }}
