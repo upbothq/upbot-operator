@@ -2,6 +2,6 @@ apiVersion: v2
 name: upbot-operator
 description: A Helm chart to distribute the project upbot-operator
 type: application
-version: 0.0.18
-appVersion: "0.0.18"
+version: 0.0.19
+appVersion: "0.0.19"
 icon: "https://example.com/icon.png"
