@@ -97,3 +97,39 @@ upbot:
     # - interval: "30" (30 seconds)
     enable: false
     interval: "60"
+
+# [CLEANUP]: Configuration for cleanup when uninstalling the chart
+cleanup:
+  # Enable cleanup job that runs before chart deletion
+  # This will delete all Monitor resources from both Kubernetes and Upbot API
+  enabled: true
+  
+  # Cleanup job image configuration
+  image:
+    repository: alpine/k8s
+    tag: "1.28.13"
+    pullPolicy: IfNotPresent
+  
+  # Timeout for the cleanup job (in seconds)
+  timeout: "300"
+  
+  # Dry run mode - if true, will only log what would be deleted without actually deleting
+  dryRun: false
+  
+  # Resource limits for the cleanup job
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  
+  # Node selector for cleanup job
+  nodeSelector: {}
+  
+  # Tolerations for cleanup job
+  tolerations: []
+  
+  # Affinity for cleanup job  
+  affinity: {}
