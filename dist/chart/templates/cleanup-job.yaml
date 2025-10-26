@@ -2,23 +2,23 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "upbot-operator.fullname" . }}-cleanup
+  name: {{ include "chart.fullname" . }}-cleanup
   namespace: {{ .Release.Namespace }}
   annotations:
     "helm.sh/hook": pre-delete
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
   labels:
-    {{- include "upbot-operator.labels" . | nindent 4 }}
+    {{- include "chart.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
 spec:
   template:
     metadata:
       labels:
-        {{- include "upbot-operator.labels" . | nindent 8 }}
+        {{- include "chart.labels" . | nindent 8 }}
         app.kubernetes.io/component: cleanup
     spec:
-      serviceAccountName: {{ include "upbot-operator.fullname" . }}-cleanup
+      serviceAccountName: {{ include "chart.fullname" . }}-cleanup
       restartPolicy: OnFailure
       containers:
       - name: cleanup
@@ -28,8 +28,8 @@ spec:
         - name: UPBOT_TOKEN
           valueFrom:
             secretKeyRef:
-              name: {{ .Values.upbot.apiKeyExistingSecret }}
-              key: token
+              name: {{ .Values.upbot.secretName }}
+              key: {{ .Values.upbot.secretKey }}
         - name: CLEANUP_TIMEOUT
           value: {{ .Values.cleanup.timeout | quote }}
         - name: CLEANUP_DRY_RUN
