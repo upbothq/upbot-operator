@@ -7,7 +7,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-delete
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation
   labels:
     {{- include "chart.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
@@ -19,7 +19,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-delete
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation
   labels:
     {{- include "chart.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
@@ -41,7 +41,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-delete
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation
   labels:
     {{- include "chart.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
