@@ -81,7 +81,7 @@ upbot:
   # Name of existing secret containing the Upbot API key
   # The secret should have a key named 'token' containing the API key
   # Example: kubectl create secret generic upbot-api-key --from-literal=token=your-api-key
-  apiKeyExistingSecret: ""
+  apiKeyExistingSecret: "upbot-api-key"
   
   # Alternative: directly specify the API key (not recommended for production)
   # This will create a secret automatically
