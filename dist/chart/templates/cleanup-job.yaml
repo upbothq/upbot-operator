@@ -28,8 +28,8 @@ spec:
         - name: UPBOT_TOKEN
           valueFrom:
             secretKeyRef:
-              name: {{ .Values.upbot.secretName }}
-              key: {{ .Values.upbot.secretKey }}
+              name: {{ .Values.upbot.apiKeyExistingSecret }}
+              key: "token"
         - name: CLEANUP_TIMEOUT
           value: {{ .Values.cleanup.timeout | quote }}
         - name: CLEANUP_DRY_RUN
