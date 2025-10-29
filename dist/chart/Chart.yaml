@@ -4,4 +4,4 @@ description: A Helm chart to distribute the project upbot-operator
 type: application
 version: 0.0.19
 appVersion: "0.0.19"
-icon: "https://example.com/icon.png"
+icon: "https://upbot.app/logo.png"
