@@ -7,7 +7,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-delete
     "helm.sh/hook-weight": "0"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation
   labels:
     {{- include "chart.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
@@ -152,37 +152,38 @@ spec:
               return 0
             fi
             
-            # First, remove finalizers from all monitors to prevent hanging
-            log "Removing finalizers from Monitor resources..."
+            # Force cleanup approach: remove finalizers and force delete monitors
+            log "Starting aggressive cleanup of Monitor resources..."
             echo "$monitors" | grep -o '"namespace":"[^"]*","name":"[^"]*"' | while read -r monitor; do
               namespace=$(echo "$monitor" | cut -d'"' -f4)
               name=$(echo "$monitor" | cut -d'"' -f8)
               
               if [ -n "$namespace" ] && [ -n "$name" ]; then
-                log "Removing finalizers from Monitor: $namespace/$name"
+                log "Force cleaning Monitor: $namespace/$name"
+                
+                # Step 1: Remove finalizers
                 kubectl patch monitor "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-              fi
-            done
-            
-            # Wait a moment for finalizer removal to process
-            sleep 2
-            
-            # Now delete Monitor resources (should be immediate since no finalizers)
-            log "Deleting Monitor resources..."
-            echo "$monitors" | grep -o '"namespace":"[^"]*","name":"[^"]*"' | while read -r monitor; do
-              namespace=$(echo "$monitor" | cut -d'"' -f4)
-              name=$(echo "$monitor" | cut -d'"' -f8)
-              
-              if [ -n "$namespace" ] && [ -n "$name" ]; then
-                log "Deleting Monitor resource: $namespace/$name"
-                kubectl delete monitor "$name" -n "$namespace" --ignore-not-found=true --timeout=30s
-                if [ $? -eq 0 ]; then
-                  log "Successfully deleted Monitor resource: $namespace/$name"
+                
+                # Step 2: Try normal deletion first
+                kubectl delete monitor "$name" -n "$namespace" --ignore-not-found=true --timeout=10s 2>/dev/null
+                
+                # Step 3: If still exists, force delete
+                if kubectl get monitor "$name" -n "$namespace" >/dev/null 2>&1; then
+                  log "Monitor $namespace/$name still exists, force deleting..."
+                  kubectl delete monitor "$name" -n "$namespace" --force --grace-period=0 2>/dev/null || true
+                fi
+                
+                # Step 4: Verify deletion
+                if kubectl get monitor "$name" -n "$namespace" >/dev/null 2>&1; then
+                  log "WARNING: Monitor $namespace/$name could not be deleted"
                 else
-                  log "WARNING: Failed to delete Monitor resource: $namespace/$name"
+                  log "Successfully cleaned Monitor: $namespace/$name"
                 fi
               fi
             done
+            
+            # Wait a moment for cleanup to settle
+            sleep 3
             
             # Also try to delete the CRD if no monitors remain
             remaining=$(kubectl get monitors --all-namespaces -o json 2>/dev/null | grep -c '"name":' || echo "0")
