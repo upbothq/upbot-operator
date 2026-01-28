@@ -1,5 +1,6 @@
 # upbot-operator
-// TODO(user): Add simple overview of use/purpose
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/upbot-operator)](https://artifacthub.io/packages/search?repo=upbot-operator)
+![GitHub Repo stars](https://img.shields.io/github/stars/upbothq/upbot-operator)
 
 ## Description
 // TODO(user): An in-depth paragraph about your project and overview of use
