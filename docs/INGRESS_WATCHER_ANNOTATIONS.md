@@ -65,7 +65,7 @@ spec:
 **Purpose**: Disable or control monitor creation for this ingress.
 
 **Values**:
-- `"false"` or `"disabled"`: Disable monitoring (will delete existing monitor)
+- `"false"`, `"0"` or any other false boolean (`"False"`, `"f"`...), or `"disabled"`: Disable monitoring (will delete existing monitor)
 - Any other value or absence: Enable monitoring (default)
 
 **Example**:
@@ -81,7 +81,7 @@ spec:
 ```
 
 **Behavior**:
-- If set to `false` or `disabled`, any existing monitor will be deleted
+- If set to a false value or `disabled`, any existing monitor will be deleted
 - Useful for internal services or development environments
 
 ## Complete Example
@@ -147,7 +147,7 @@ The Ingress Watcher adds metadata to created monitors for tracking:
 - Only monitors created by the ingress watcher are managed (checked via labels)
 
 ### URL Generation
-1. **Scheme**: `https` if TLS is configured, otherwise `http`
+1. **Scheme**: `https` if a `spec.tls` entry lists the host (or covers it with a wildcard like `*.example.com`, or lists no hosts), otherwise `http`
 2. **Host**: First host from `spec.rules[0].host`
 3. **Path**: Value from `upbot.app/path` annotation (if provided)
 
@@ -169,7 +169,7 @@ The Ingress Watcher adds metadata to created monitors for tracking:
 - Check if the annotation values are valid
 
 ### Wrong Target URL
-- Verify the ingress has TLS configuration if you expect `https`
+- Verify the host is listed in `spec.tls[].hosts` if you expect `https`
 - Check the `upbot.app/path` annotation format
 - Ensure the ingress rule has a valid host
 

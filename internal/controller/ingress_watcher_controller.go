@@ -2,6 +2,8 @@ package controller
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	monitoringv1alpha1 "github.com/upbothq/operator/api/v1alpha1"
 	"golang.org/x/net/context"
@@ -41,7 +43,7 @@ func (r *IngressWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Check if monitoring is disabled for this ingress
-	if disabled, exists := ingress.Annotations["upbot.app/monitor"]; exists && (disabled == "false" || disabled == "disabled") {
+	if monitoringDisabled(&ingress) {
 		logger.Info("Monitoring disabled for this ingress via annotation", "ingress", ingress.Name)
 		// Check if there's an existing monitor that should be cleaned up
 		return r.handleMonitorCleanupForDisabledIngress(ctx, req.NamespacedName)
@@ -250,6 +252,40 @@ func (r *IngressWatcherReconciler) handleMonitorCleanupForDisabledIngress(ctx co
 	return ctrl.Result{}, nil
 }
 
+// monitoringDisabled reads the upbot.app/monitor annotation: any false boolean ("false", "0", "False", "f"...)
+// or "disabled" turns monitoring off, anything else leaves it on
+func monitoringDisabled(ingress *networkingv1.Ingress) bool {
+	value := strings.TrimSpace(ingress.Annotations["upbot.app/monitor"])
+	if strings.EqualFold(value, "disabled") {
+		return true
+	}
+	enabled, err := strconv.ParseBool(value)
+	return err == nil && !enabled
+}
+
+// hostHasTLS tells if one of the Ingress TLS entries covers the host. An entry without hosts uses the
+// controller's default certificate for every host, a wildcard covers one label ("*.example.com" covers
+// "api.example.com" only).
+func hostHasTLS(ingress *networkingv1.Ingress, host string) bool {
+	for _, tls := range ingress.Spec.TLS {
+		if len(tls.Hosts) == 0 {
+			return true
+		}
+		for _, tlsHost := range tls.Hosts {
+			if strings.EqualFold(tlsHost, host) {
+				return true
+			}
+			if suffix, ok := strings.CutPrefix(tlsHost, "*."); ok {
+				label, rest, found := strings.Cut(host, ".")
+				if found && label != "" && strings.EqualFold(rest, suffix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // validIntervals are the intervals the Monitor CRD and the Upbot API accept, in seconds
 var validIntervals = map[string]bool{"30": true, "60": true, "120": true, "300": true, "600": true}
 
@@ -285,9 +321,9 @@ func (r *IngressWatcherReconciler) getTargetFromIngress(ingress *networkingv1.In
 		return "", fmt.Errorf("no host found in Ingress rule")
 	}
 
-	scheme := "https"
-	if len(ingress.Spec.TLS) == 0 {
-		scheme = "http"
+	scheme := "http"
+	if hostHasTLS(ingress, rule.Host) {
+		scheme = "https"
 	}
 
 	// Start with base URL
