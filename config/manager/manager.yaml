@@ -63,8 +63,16 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: ghcr.io/upbothq/upbot-operator:v{{ .Chart.AppVersion }}
-        imagePullPolicy: Never # TODO(user): Change to "IfNotPresent" or "Always" in production.
+        # Replaced by `make deploy IMG=...`, the Helm chart sets it from its values
+        image: controller:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        # The Upbot API key, from a Secret with the key under `token`
+        - name: UPBOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: upbot-api-key
+              key: token
         name: manager
         ports: []
         securityContext:

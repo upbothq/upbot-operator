@@ -2,24 +2,24 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "chart.fullname" . }}-cleanup
+  name: {{ include "upbot-operator.fullname" . }}-cleanup
   namespace: {{ .Release.Namespace }}
   annotations:
     "helm.sh/hook": pre-delete
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    {{- include "chart.labels" . | nindent 4 }}
+    {{- include "upbot-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
 spec:
   backoffLimit: 1
   template:
     metadata:
       labels:
-        {{- include "chart.labels" . | nindent 8 }}
+        {{- include "upbot-operator.labels" . | nindent 8 }}
         app.kubernetes.io/component: cleanup
     spec:
-      serviceAccountName: {{ include "chart.fullname" . }}-cleanup
+      serviceAccountName: {{ include "upbot-operator.fullname" . }}-cleanup
       restartPolicy: Never
       containers:
       - name: cleanup
@@ -33,7 +33,7 @@ spec:
         - name: OPERATOR_NAMESPACE
           value: {{ .Release.Namespace | quote }}
         - name: OPERATOR_DEPLOYMENT
-          value: {{ include "chart.managerName" . }}
+          value: {{ include "upbot-operator.resourceName" (dict "suffix" "controller-manager" "context" $) }}
         - name: INGRESS_WATCHER_ENABLED
           value: {{ .Values.upbot.ingressWatcher.enable | quote }}
         command:

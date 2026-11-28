@@ -1,22 +1,20 @@
-{{- define "chart.name" -}}
-{{- if .Chart }}
-  {{- if .Chart.Name }}
-    {{- .Chart.Name | trunc 63 | trimSuffix "-" }}
-  {{- else if .Values.nameOverride }}
-    {{ .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-  {{- else }}
-    upbot-operator
-  {{- end }}
-{{- else }}
-  upbot-operator
-{{- end }}
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "upbot-operator.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "chart.fullname" -}}
+{{/*
+Create a default fully qualified app name.
+We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
+If release name contains chart name it will be used as a full name.
+*/}}
+{{- define "upbot-operator.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- $name := include "chart.name" . }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if contains $name .Release.Name }}
 {{- .Release.Name | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -25,64 +23,41 @@
 {{- end }}
 {{- end }}
 
+{{/*
+Namespace for generated references.
+Always uses the Helm release namespace.
+*/}}
+{{- define "upbot-operator.namespaceName" -}}
+{{- .Release.Namespace }}
+{{- end }}
 
 {{/*
-Operator Deployment, and the prefix of the resources that belong to it. A release named upbot-operator keeps
-the names the chart always used: upbot-operator-controller-manager.
+Resource name with proper truncation for Kubernetes 63-character limit.
+Takes a dict with:
+  - .suffix: Resource name suffix (e.g., "metrics", "webhook")
+  - .context: Template context (root context with .Values, .Release, etc.)
+Dynamically calculates safe truncation to ensure total name length <= 63 chars.
 */}}
-{{- define "chart.managerName" -}}
-{{- printf "%s-controller-manager" (include "chart.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- define "upbot-operator.resourceName" -}}
+{{- $fullname := include "upbot-operator.fullname" .context }}
+{{- $suffix := .suffix }}
+{{- $maxLen := sub 62 (len $suffix) | int }}
+{{- if gt (len $fullname) $maxLen }}
+{{- printf "%s-%s" (trunc $maxLen $fullname | trimSuffix "-") $suffix | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" $fullname $suffix | trunc 63 | trimSuffix "-" }}
 {{- end }}
-
-{{- define "chart.serviceAccountName" -}}
-{{- .Values.controllerManager.serviceAccountName | default (include "chart.managerName" .) }}
 {{- end }}
-
-
-{{- define "chart.labels" -}}
-{{- if .Chart.AppVersion -}}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-{{- if .Chart.Version }}
-helm.sh/chart: {{ .Chart.Version | quote }}
-{{- end }}
-app.kubernetes.io/name: {{ include "chart.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-
-{{- define "chart.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "chart.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-
-{{- define "chart.hasMutatingWebhooks" -}}
-{{- $hasMutating := false }}
-{{- range . }}
-  {{- if eq .type "mutating" }}
-    $hasMutating = true }}{{- end }}
-{{- end }}
-{{ $hasMutating }}}}{{- end }}
-
-
-{{- define "chart.hasValidatingWebhooks" -}}
-{{- $hasValidating := false }}
-{{- range . }}
-  {{- if eq .type "validating" }}
-    $hasValidating = true }}{{- end }}
-{{- end }}
-{{ $hasValidating }}}}{{- end }}
-
 
 {{/*
-Secret holding the Upbot API token: the one the chart creates from upbot.apiKey, else upbot.apiKeyExistingSecret
+ServiceAccount name to use.
+When enabled, use the chart's ServiceAccount name.
+When disabled, serviceAccount.name must be set; use "default" to pick the namespace default ServiceAccount.
 */}}
-{{- define "chart.upbotSecretName" -}}
-{{- if .Values.upbot.apiKey -}}
-{{ include "chart.fullname" . }}-upbot-api-key
-{{- else -}}
-{{ .Values.upbot.apiKeyExistingSecret }}
-{{- end -}}
+{{- define "upbot-operator.serviceAccountName" -}}
+{{- if .Values.serviceAccount.enabled }}
+{{- include "upbot-operator.resourceName" (dict "suffix" "controller-manager" "context" .) }}
+{{- else }}
+{{- required "serviceAccount.name is required when serviceAccount.enabled=false (set name: default explicitly to use the namespace default ServiceAccount)" .Values.serviceAccount.name }}
+{{- end }}
 {{- end }}

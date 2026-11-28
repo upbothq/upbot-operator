@@ -60,6 +60,12 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
+		By("creating a placeholder Upbot API key, the operator doesn't start without one")
+		cmd = exec.Command("kubectl", "-n", namespace, "create", "secret", "generic", "upbot-api-key",
+			"--from-literal=token=e2e-placeholder")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create the API key Secret")
+
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
 		_, err = utils.Run(cmd)

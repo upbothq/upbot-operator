@@ -1,91 +1,228 @@
-# [MANAGER]: Manager Deployment Configurations
-controllerManager:
+## String to partially override chart.fullname template (will maintain the release name)
+##
+# nameOverride: ""
+
+## String to fully override chart.fullname template
+##
+# fullnameOverride: ""
+
+## Configure the controller manager deployment
+##
+manager:
+  ## Set to false to skip manager installation
+  ##
+  enabled: true
+
   replicas: 1
-  container:
-    image:
-      repository: ghcr.io/upbothq/upbot-operator
-      tag: ""
-    args:
-      - "--leader-elect"
-      - "--metrics-bind-address=:8443"
-      - "--health-probe-bind-address=:8081"
-    resources:
-      limits:
-        cpu: 500m
-        memory: 128Mi
-      requests:
-        cpu: 10m
-        memory: 64Mi
-    livenessProbe:
-      initialDelaySeconds: 15
-      periodSeconds: 20
-      httpGet:
-        path: /healthz
-        port: 8081
-    readinessProbe:
-      initialDelaySeconds: 5
-      periodSeconds: 10
-      httpGet:
-        path: /readyz
-        port: 8081
-    securityContext:
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop:
-          - "ALL"
-  securityContext:
+
+  image:
+    repository: ghcr.io/upbothq/upbot-operator
+    ## Image tag (defaults to Chart.appVersion if not set)
+    ##
+    # tag: ""
+    pullPolicy: IfNotPresent
+
+  ## Arguments, rendered with tpl: the upbot section below sets the Upbot ones.
+  ## Keep them when you override this list.
+  ##
+  args:
+    - --leader-elect
+    - --resync-period={{ .Values.upbot.resyncPeriod }}
+    - --enable-ingress-watcher={{ .Values.upbot.ingressWatcher.enable }}
+    - --ingress-watcher-interval={{ .Values.upbot.ingressWatcher.interval }}
+
+  ## Health probes.
+  ## The manager serves the liveness (/healthz) and readiness (/readyz) endpoints on this port.
+  ##
+  healthProbe:
+    # Health probe server port
+    port: 8081
+
+  ## Environment variables. UPBOT_TOKEN is the Upbot API key: create the Secret it reads
+  ## (kubectl create secret generic upbot-api-key --from-literal=token=<API key>), or change its name here.
+  ##
+  env:
+    - name: UPBOT_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: token
+          name: upbot-api-key
+
+  ## Env overrides (--set manager.envOverrides.VAR=value)
+  ## Same name in env above: this value takes precedence.
+  ##
+  envOverrides: {}
+
+  ## Image pull secrets
+  ##
+  # imagePullSecrets:
+  #   - name: myregistrykey
+
+  ## Pod-level security settings
+  ##
+  podSecurityContext:
     runAsNonRoot: true
     seccompProfile:
       type: RuntimeDefault
+
+  ## Container-level security settings
+  ##
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+
+  ## Resource limits and requests
+  ##
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+
+  ## Manager pod's affinity
+  ##
+  affinity: {}
+
+  ## Manager pod's node selector
+  ##
+  nodeSelector: {}
+
+  ## Manager pod's tolerations
+  ##
+  tolerations: []
+
+  ## Deployment strategy
+  ##
+  # strategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxSurge: 25%
+  #     maxUnavailable: 25%
+
+  ## Priority class name
+  ##
+  # priorityClassName: ""
+
+  ## Topology spread constraints
+  ##
+  # topologySpreadConstraints: []
+
+  ## Termination grace period seconds
+  ##
   terminationGracePeriodSeconds: 10
-  # Defaults to <release fullname>-controller-manager
-  serviceAccountName: ""
 
-# [RBAC]: To enable RBAC (Permissions) configurations
+  ## Custom Deployment labels
+  ##
+  # labels: {}
+
+  ## Custom Deployment annotations
+  ##
+  # annotations: {}
+
+  ## Custom Pod labels and annotations
+  ##
+  # pod:
+  #   labels: {}
+  #   annotations: {}
+
+## RBAC configuration
+##
 rbac:
-  enable: true
+  ## RBAC resource scope
+  ## - false (default): ClusterRole/ClusterRoleBinding (all namespaces)
+  ## - true: Role/RoleBinding (release namespace only)
+  ##
+  namespaced: false
 
-# [CRDs]: To enable the CRDs
+  ## Helper roles for CRD management (admin/editor/viewer)
+  ##
+  helpers:
+    ## Install convenience admin/editor/viewer roles for CRDs
+    ##
+    enabled: true
+
+## ServiceAccount configuration
+##
+serviceAccount:
+  # Install default ServiceAccount provided
+  enabled: true
+
+  ## Existing ServiceAccount name (required when enabled=false)
+  ## Set to "default" to use the namespace default ServiceAccount
+  ## Note: When enabled=true, respects nameOverride/fullnameOverride
+  ##
+  # name: ""
+
+  ## Custom ServiceAccount annotations
+  ##
+  # annotations: {}
+
+  ## Custom ServiceAccount labels
+  ##
+  # labels: {}
+
+## Custom Resource Definitions
+##
 crd:
-  # This option determines whether the CRDs are included
-  # in the installation process.
-  enable: true
-
-  # Enabling this option adds the "helm.sh/resource-policy": keep
-  # annotation to the CRD, ensuring it remains installed even when
-  # the Helm release is uninstalled.
-  # NOTE: Removing the CRDs will also remove all cert-manager CR(s)
-  # (Certificates, Issuers, ...) due to garbage collection.
+  # Install CRDs with the chart
+  enabled: true
+  # Keep CRDs when uninstalling
   keep: true
 
-# [METRICS]: Set to true to generate manifests for exporting metrics.
-# To disable metrics export set false, and ensure that the
-# ControllerManager argument "--metrics-bind-address=:8443" is removed.
+## Controller metrics endpoint.
+## Enable to expose /metrics endpoint
+##
 metrics:
-  enable: true
+  enabled: true
+  # Metrics server port
+  port: 8443
+  # Enable secure metrics: HTTPS with certs/auth (true) or HTTP (false).
+  # Note: Metrics authn/authz needs ClusterRole access.
+  secure: true
 
-# [PROMETHEUS]: To enable a ServiceMonitor to export metrics to Prometheus set true
+## Cert-manager integration for TLS certificates.
+## Required for webhook certificates and metrics endpoint certificates.
+##
+certManager:
+  enabled: false
+
+## Webhook server configuration
+##
+webhook:
+  enabled: false
+  # Webhook server port
+  port: 9443
+
+## Prometheus ServiceMonitor for metrics scraping.
+## Requires prometheus-operator to be installed in the cluster.
+##
 prometheus:
-  enable: false
+  enabled: false
 
-# [CERT-MANAGER]: To enable cert-manager injection to webhooks set true
-certmanager:
-  enable: false
+  ## Custom ServiceMonitor labels
+  ##
+  # labels: {}
 
-# [NETWORK POLICIES]: To enable NetworkPolicies set true
+  ## Custom ServiceMonitor annotations
+  ##
+  # annotations: {}
+
+## Network policies for controlling traffic flow.
+## Enable to restrict ingress to the controller manager.
+##
 networkPolicy:
-  enable: false
+  enabled: false
 
-
-# [UPBOT]: Configuration for Upbot API integration
+## Upbot configuration
+##
 upbot:
-  # Name of existing secret containing the Upbot API key
-  # The secret should have a key named 'token' containing the API key
-  # Example: kubectl create secret generic upbot-api-key --from-literal=token=your-api-key
-  apiKeyExistingSecret: "upbot-api-key"
-  
-  # Alternative: directly specify the API key (not recommended for production)
-  # This will create a secret automatically and takes precedence over apiKeyExistingSecret
+  # Alternative to creating the Secret yourself: the chart creates the upbot-api-key Secret that manager.env
+  # reads, with this API key (it ends up in the Helm release, avoid it in production)
   # apiKey: "your-api-key-here"
 
   # How often each Monitor is read back from Upbot: changes made in the Upbot dashboard are undone and
@@ -94,35 +231,32 @@ upbot:
 
   # [INGRESS WATCHER]: Configuration for automatic Monitor creation from Ingress resources
   ingressWatcher:
-    # Set to true to enable automatic Monitor creation for Ingress resources
-    # When enabled, the operator will automatically create Monitor resources for
-    # every Ingress resource in the cluster. The monitor will use:
-    # - type: "http"
-    # - target: extracted from the first Ingress rule (https://host or http://host)
-    # - interval: "30" (30 seconds)
+    # Create an http Monitor for each host of each Ingress of the cluster
     enable: false
+    # Interval of those monitors, in seconds: 30, 60, 120, 300 or 600
     interval: "60"
 
-# [CLEANUP]: Configuration for cleanup when uninstalling the chart
+## Cleanup when uninstalling the chart
+##
 cleanup:
   # Enable cleanup job that runs before chart deletion
   # It deletes every Monitor resource while the operator still runs, so the operator deletes each one
   # from Upbot. Monitors created in the Upbot dashboard are not touched, and the CRD stays (see crd.keep)
   enabled: true
-  
+
   # Cleanup job image configuration
   image:
     repository: alpine/k8s
     tag: "1.28.13"
     pullPolicy: IfNotPresent
-  
+
   # How long to wait for the operator to delete the monitors from Upbot (in seconds).
   # Monitors still there after it have their finalizer removed, and stay in Upbot
   timeout: "300"
-  
+
   # Dry run mode - if true, will only log what would be deleted without actually deleting
   dryRun: false
-  
+
   # Resource limits for the cleanup job
   resources:
     limits:
@@ -131,12 +265,12 @@ cleanup:
     requests:
       cpu: 50m
       memory: 64Mi
-  
+
   # Node selector for cleanup job
   nodeSelector: {}
-  
+
   # Tolerations for cleanup job
   tolerations: []
-  
-  # Affinity for cleanup job  
+
+  # Affinity for cleanup job
   affinity: {}

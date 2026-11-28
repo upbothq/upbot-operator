@@ -1,36 +1,33 @@
-1. To configure the Upbot API token, you have two options:
+The Upbot operator is installed in namespace {{ .Release.Namespace }}.
 
-   Option A: Use an existing secret (recommended)
-   kubectl create secret generic upbot-api-key --from-literal=token=your-api-key-here
-   
-   Then install/upgrade with:
-   helm install upbot-operator . --set upbot.apiKeyExistingSecret=upbot-api-key
+1. The operator reads the Upbot API key from a Secret{{ if .Values.upbot.apiKey }}, created by this release{{ end }}.
+{{- if not .Values.upbot.apiKey }} If you haven't created it yet:
 
-   Option B: Set the API key directly (not recommended for production)
-   helm install upbot-operator . --set upbot.apiKey=your-api-key-here
+   kubectl -n {{ .Release.Namespace }} create secret generic upbot-api-key --from-literal=token=<your API key>
+   kubectl -n {{ .Release.Namespace }} rollout restart deployment {{ include "upbot-operator.resourceName" (dict "suffix" "controller-manager" "context" $) }}
+{{- end }}
 
-2. Get the status of the operator deployment:
-   kubectl get deployment {{ include "chart.fullname" . }}-controller-manager -n {{ .Release.Namespace }}
+2. Check that it runs:
 
-3. Check the logs of the operator:
-   kubectl logs -l control-plane=controller-manager -n {{ .Release.Namespace }}
+   kubectl -n {{ .Release.Namespace }} get deployment {{ include "upbot-operator.resourceName" (dict "suffix" "controller-manager" "context" $) }}
+   kubectl -n {{ .Release.Namespace }} logs -l control-plane=controller-manager
 
-4. Create a Monitor resource:
+3. Create a monitor:
+
    kubectl apply -f - <<EOF
    apiVersion: monitoring.upbot.app/v1alpha1
    kind: Monitor
    metadata:
-     name: example-monitor
+     name: example
    spec:
-     type: "http"
-     target: "https://example.com"
+     type: http
+     target: https://example.com
      interval: "60"
    EOF
 
-5. Ingress Watcher (optional):
-   {{- if .Values.upbot.ingressWatcher.enable }}
-   ✅ Ingress Watcher is ENABLED - Monitor resources will be automatically created for Ingress resources
-   {{- else }}
-   ❌ Ingress Watcher is DISABLED - To enable automatic Monitor creation for Ingress resources:
-   helm upgrade {{ .Release.Name }} . --set upbot.ingressWatcher.enable=true
-   {{- end }}
+   kubectl get monitors -A
+
+4. Ingress watcher: {{ if .Values.upbot.ingressWatcher.enable }}on, every Ingress host gets a monitor.{{ else }}off. To create a monitor for every Ingress host:
+
+   helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set upbot.ingressWatcher.enable=true
+{{- end }}

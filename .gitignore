@@ -24,3 +24,6 @@ go.work
 *.swp
 *.swo
 *~
+
+# Kustomize output the chart is generated from (make helm-chart)
+dist/install.yaml

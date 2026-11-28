@@ -38,9 +38,10 @@ jobs:
       - name: Check go.mod and generated files are up to date
         run: |
           go mod tidy
-          make manifests generate
-          if ! git diff --exit-code; then
-            echo "::error::Run 'go mod tidy && make manifests generate' and commit the result"
+          make manifests generate helm-chart
+          if ! git diff --exit-code || [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            echo "::error::Run 'go mod tidy && make manifests generate helm-chart' and commit the result"
             exit 1
           fi
 
@@ -118,8 +119,8 @@ jobs:
           kubectl -n upbot-operator-system create secret generic upbot-api-key --from-literal=token=ci-placeholder
           helm install ci ./dist/chart \
             --namespace upbot-operator-system \
-            --set controllerManager.container.image.repository=upbot-operator \
-            --set controllerManager.container.image.tag=ci \
+            --set manager.image.repository=upbot-operator \
+            --set manager.image.tag=ci \
             --set fullnameOverride=upbot-ci \
             --set upbot.ingressWatcher.enable=true \
             --wait --timeout 3m

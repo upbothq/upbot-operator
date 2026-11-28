@@ -1,0 +1,121 @@
+{{- /*
+Charts before 0.0.21 selected the operator pods with the app.kubernetes.io/instance label too. A Deployment's
+selector can't change, so before the upgrade this job deletes a Deployment that still has the old selector and
+Helm creates it again. Monitors are not touched: the operator is only stopped for the few seconds this takes.
+*/}}
+{{- $deployment := include "upbot-operator.resourceName" (dict "suffix" "controller-manager" "context" $) }}
+{{- $name := printf "%s-upgrade" (include "upbot-operator.fullname" .) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    {{- include "upbot-operator.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    {{- include "upbot-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: [{{ $deployment | quote }}]
+  verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    {{- include "upbot-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    {{- include "upbot-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: upgrade
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "upbot-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: upgrade
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: upgrade
+        image: {{ .Values.cleanup.image.repository }}:{{ .Values.cleanup.image.tag }}
+        imagePullPolicy: {{ .Values.cleanup.image.pullPolicy }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        # kubectl writes its cache under HOME, the job doesn't run as root
+        - name: HOME
+          value: /tmp
+        - name: NAMESPACE
+          value: {{ .Release.Namespace | quote }}
+        - name: DEPLOYMENT
+          value: {{ $deployment | quote }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          instance=$(kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" \
+            -o jsonpath='{.spec.selector.matchLabels.app\.kubernetes\.io/instance}' 2>/dev/null) || true
+          if [ -z "$instance" ]; then
+            echo "Deployment $DEPLOYMENT has the current selector, nothing to do"
+            exit 0
+          fi
+          echo "Deleting Deployment $DEPLOYMENT, Helm creates it again with the new selector"
+          kubectl -n "$NAMESPACE" delete deployment "$DEPLOYMENT" --wait=true
+        resources:
+          {{- toYaml .Values.cleanup.resources | nindent 10 }}
+      {{- with .Values.cleanup.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cleanup.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

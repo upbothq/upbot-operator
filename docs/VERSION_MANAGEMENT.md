@@ -18,7 +18,7 @@ gh run watch --repo upbothq/upbot-operator
 
 1. Runs `make test`.
 2. Bumps `VERSION`, sets `version` and `appVersion` in `dist/chart/Chart.yaml`, commits `chore(release): X.Y.Z` and tags `vX.Y.Z`.
-3. Builds the image for `linux/amd64` and `linux/arm64` (Go cross-compiles, no emulation), with an SBOM and provenance, pushes `ghcr.io/upbothq/upbot-operator:vX.Y.Z` and signs it with cosign (keyless).
+3. Builds the image for `linux/amd64` and `linux/arm64` (Go cross-compiles, no emulation), with an SBOM and provenance, pushes `ghcr.io/upbothq/upbot-operator:vX.Y.Z` and `:X.Y.Z` (the tag the chart uses by default) and signs it with cosign (keyless).
 4. Pushes the release commit and the tag to `main`. If `main` moved during the run, the push fails before anything else is published: run the workflow again, it releases the same version.
 5. Moves the `latest` image tag to the new image.
 6. Pushes the chart to `oci://ghcr.io/upbothq/charts/upbot-operator`.
