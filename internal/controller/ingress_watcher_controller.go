@@ -25,6 +25,8 @@ const (
 	sourceIngressWatcher    = "ingress-watcher"
 	sourceIngressAnnotation = "upbot.app/source-ingress"
 	sourceHostAnnotation    = "upbot.app/source-host"
+	// The Ingress watcher only creates http monitors
+	monitorTypeHTTP = "http"
 	// Longest Kubernetes object name
 	maxObjectName = 253
 )
@@ -138,7 +140,7 @@ func splitMonitors(monitors []monitoringv1alpha1.Monitor, ingress client.ObjectK
 // monitoredHosts lists the hosts of the Ingress rules once each, in order. A wildcard host has no URL to check.
 func monitoredHosts(ingress *networkingv1.Ingress) []string {
 	seen := map[string]bool{}
-	var hosts []string
+	hosts := make([]string, 0, len(ingress.Spec.Rules))
 	for _, rule := range ingress.Spec.Rules {
 		host := strings.ToLower(rule.Host)
 		if host == "" || strings.HasPrefix(host, "*") || seen[host] {
@@ -191,11 +193,11 @@ func (r *IngressWatcherReconciler) createMonitor(ctx context.Context, ingress *n
 			},
 			Labels: map[string]string{
 				sourceLabel:             sourceIngressWatcher,
-				"upbot.app/target-type": "http",
+				"upbot.app/target-type": monitorTypeHTTP,
 			},
 		},
 		Spec: monitoringv1alpha1.MonitorSpec{
-			Type:     "http",
+			Type:     monitorTypeHTTP,
 			Target:   target,
 			Interval: interval,
 		},
@@ -215,14 +217,14 @@ func (r *IngressWatcherReconciler) createMonitor(ctx context.Context, ingress *n
 }
 
 func (r *IngressWatcherReconciler) updateMonitor(ctx context.Context, monitor *monitoringv1alpha1.Monitor, host, target, interval string) error {
-	if monitor.Spec.Target == target && monitor.Spec.Interval == interval && monitor.Spec.Type == "http" &&
+	if monitor.Spec.Target == target && monitor.Spec.Interval == interval && monitor.Spec.Type == monitorTypeHTTP &&
 		monitor.Annotations[sourceHostAnnotation] == host {
 		return nil
 	}
 
 	monitor.Spec.Target = target
 	monitor.Spec.Interval = interval
-	monitor.Spec.Type = "http"
+	monitor.Spec.Type = monitorTypeHTTP
 	if monitor.Annotations == nil {
 		monitor.Annotations = map[string]string{}
 	}
