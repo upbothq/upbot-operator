@@ -47,7 +47,7 @@ cosign verify ghcr.io/upbothq/upbot-operator:vX.Y.Z \
 ## Versions
 
 - `VERSION` is the version of the last release; only the workflow changes it.
-- The Lint workflow fails when `VERSION` and the chart disagree.
+- The CI workflow fails when `VERSION` and the chart disagree.
 - Commit subjects become the release notes, so write them as [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, …).
 
 ## Test image

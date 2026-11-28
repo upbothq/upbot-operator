@@ -1,0 +1,136 @@
+name: CI
+
+# Pushes to main and pull requests, so a pull request runs each job once
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.29.0
+  HELM_VERSION: v3.18.4
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.1.6
+
+      # Fails instead of fixing it in CI: the commit must carry go.mod, go.sum and the generated files
+      - name: Check go.mod and generated files are up to date
+        run: |
+          go mod tidy
+          make manifests generate
+          if ! git diff --exit-code; then
+            echo "::error::Run 'go mod tidy && make manifests generate' and commit the result"
+            exit 1
+          fi
+
+      - name: Check VERSION and the chart agree
+        run: |
+          VERSION=$(cat VERSION)
+          CHART_VERSION=$(grep '^version:' dist/chart/Chart.yaml | cut -d' ' -f2)
+          CHART_APP_VERSION=$(grep '^appVersion:' dist/chart/Chart.yaml | cut -d' ' -f2 | tr -d '"')
+          if [[ "$VERSION" != "$CHART_VERSION" ]] || [[ "$VERSION" != "$CHART_APP_VERSION" ]]; then
+            echo "::error::VERSION is $VERSION, the chart has version $CHART_VERSION and appVersion $CHART_APP_VERSION. Run: make update-helm-chart"
+            exit 1
+          fi
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: make test
+
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The Makefile creates its own cluster
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          install_only: true
+
+      - name: Run e2e tests
+        run: make test-e2e
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Lint chart
+        run: helm lint ./dist/chart
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: chart
+
+      - name: Build image
+        run: |
+          make docker-build IMG=upbot-operator:ci
+          kind load docker-image upbot-operator:ci --name chart
+
+      # A placeholder token is enough for the operator to start, it only calls the API for Monitors
+      - name: Install chart
+        run: |
+          kubectl create namespace upbot-operator-system
+          kubectl -n upbot-operator-system create secret generic upbot-api-key --from-literal=token=ci-placeholder
+          helm install ci ./dist/chart \
+            --namespace upbot-operator-system \
+            --set controllerManager.container.image.repository=upbot-operator \
+            --set controllerManager.container.image.tag=ci \
+            --set fullnameOverride=upbot-ci \
+            --set upbot.ingressWatcher.enable=true \
+            --wait --timeout 3m
+
+      - name: Show operator state
+        if: failure()
+        run: |
+          kubectl -n upbot-operator-system get all
+          kubectl -n upbot-operator-system describe pods
+          kubectl -n upbot-operator-system logs -l control-plane=controller-manager --tail=100 || true
+
+      # Runs the pre-delete cleanup job, which restarts the operator without the Ingress watcher
+      - name: Uninstall chart
+        run: helm uninstall ci --namespace upbot-operator-system --wait --timeout 5m
