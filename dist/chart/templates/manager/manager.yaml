@@ -39,17 +39,11 @@ spec:
             - /manager
           image: {{ .Values.controllerManager.container.image.repository }}:{{ if .Values.controllerManager.container.image.tag }}{{ .Values.controllerManager.container.image.tag }}{{ else }}v{{ .Chart.AppVersion }}{{ end }}
           env:
-            {{- if .Values.upbot.apiKeyExistingSecret }}
+            {{- if or .Values.upbot.apiKey .Values.upbot.apiKeyExistingSecret }}
             - name: UPBOT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.upbot.apiKeyExistingSecret }}
-                  key: token
-            {{- else if .Values.upbot.apiKey }}
-            - name: UPBOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "chart.fullname" . }}-upbot-api-key
+                  name: {{ include "chart.upbotSecretName" . }}
                   key: token
             {{- end }}
             {{- if .Values.controllerManager.container.env }}

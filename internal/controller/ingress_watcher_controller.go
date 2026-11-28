@@ -76,13 +76,7 @@ func (r *IngressWatcherReconciler) createMonitorFromIngress(ctx context.Context,
 		return ctrl.Result{}, err
 	}
 
-	// Check for custom interval annotation first, then fall back to global setting
-	interval := r.Interval
-	if customInterval, exists := ingress.Annotations["upbot.app/interval"]; exists && customInterval != "" {
-		interval = customInterval
-	} else if interval == "" {
-		interval = "30" // default fallback
-	}
+	interval := r.intervalFor(ctx, ingress)
 
 	monitor := &monitoringv1alpha1.Monitor{
 		ObjectMeta: metav1.ObjectMeta{
@@ -140,13 +134,7 @@ func (r *IngressWatcherReconciler) updateMonitorIfNeeded(ctx context.Context, mo
 
 	logger.Info("Target comparison", "monitor", monitor.Name, "current", monitor.Spec.Target, "expected", expectedTarget)
 
-	// Get the expected interval (check for custom annotation first)
-	expectedInterval := r.Interval
-	if customInterval, exists := ingress.Annotations["upbot.app/interval"]; exists && customInterval != "" {
-		expectedInterval = customInterval
-	} else if expectedInterval == "" {
-		expectedInterval = "30" // default fallback
-	}
+	expectedInterval := r.intervalFor(ctx, ingress)
 
 	logger.Info("Interval comparison", "monitor", monitor.Name, "current", monitor.Spec.Interval, "expected", expectedInterval)
 
@@ -260,6 +248,31 @@ func (r *IngressWatcherReconciler) handleMonitorCleanupForDisabledIngress(ctx co
 
 	logger.Info("Successfully deleted monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
 	return ctrl.Result{}, nil
+}
+
+// validIntervals are the intervals the Monitor CRD and the Upbot API accept, in seconds
+var validIntervals = map[string]bool{"30": true, "60": true, "120": true, "300": true, "600": true}
+
+// intervalFor returns the upbot.app/interval annotation, else the --ingress-watcher-interval flag, else 30.
+// An invalid value is skipped with a log line: the Monitor CRD would refuse it and the Ingress would never get a monitor.
+func (r *IngressWatcherReconciler) intervalFor(ctx context.Context, ingress *networkingv1.Ingress) string {
+	logger := log.FromContext(ctx)
+
+	if custom := ingress.Annotations["upbot.app/interval"]; custom != "" {
+		if validIntervals[custom] {
+			return custom
+		}
+		logger.Info("Ignoring invalid upbot.app/interval annotation, allowed values are 30, 60, 120, 300 and 600", "ingress", ingress.Name, "interval", custom)
+	}
+
+	if validIntervals[r.Interval] {
+		return r.Interval
+	}
+	if r.Interval != "" {
+		logger.Info("Ignoring invalid --ingress-watcher-interval, allowed values are 30, 60, 120, 300 and 600", "interval", r.Interval)
+	}
+
+	return "30"
 }
 
 func (r *IngressWatcherReconciler) getTargetFromIngress(ingress *networkingv1.Ingress) (string, error) {

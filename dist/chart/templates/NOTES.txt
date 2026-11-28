@@ -24,7 +24,7 @@
    spec:
      type: "http"
      target: "https://example.com"
-     interval: "5m"
+     interval: "60"
    EOF
 
 5. Ingress Watcher (optional):
@@ -32,5 +32,5 @@
    ✅ Ingress Watcher is ENABLED - Monitor resources will be automatically created for Ingress resources
    {{- else }}
    ❌ Ingress Watcher is DISABLED - To enable automatic Monitor creation for Ingress resources:
-   helm upgrade {{ .Release.Name }} . --set ingressWatcher.enable=true
+   helm upgrade {{ .Release.Name }} . --set upbot.ingressWatcher.enable=true
    {{- end }}

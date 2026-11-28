@@ -20,40 +20,47 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // MonitorSpec defines the desired state of Monitor
 type MonitorSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// Target is what the monitor checks: a URL for http, a host for ping and dns, host:port for tcp
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	Target string `json:"target"`
 
-	// foo is an example field of Monitor. Edit monitor_types.go to remove/update
-	// +optional
-	Target   string `json:"target,omitempty"`
-	Interval string `json:"interval,omitempty"`
-	Type     string `json:"type,omitempty"`
-	// Foo *string `json:"foo,omitempty"`
+	// Interval between two checks, in seconds
+	// +kubebuilder:validation:Enum="30";"60";"120";"300";"600"
+	Interval string `json:"interval"`
+
+	// Type of the monitor
+	// +kubebuilder:validation:Enum=http;ping;tcp;dns
+	Type string `json:"type"`
 }
 
 // MonitorStatus defines the observed state of Monitor.
 type MonitorStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// ExternalID is the ID of the monitor in the external system
+	// ExternalID is the ID of the monitor in Upbot
 	// +optional
 	ExternalID string `json:"externalID,omitempty"`
+
+	// ObservedGeneration is the generation last sent to Upbot
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions hold the Ready condition, with the Upbot API error when the sync fails
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
 // +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.target`
 // +kubebuilder:printcolumn:name="Interval",type=string,JSONPath=`.spec.interval`
-// +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`
-// +kubebuilder:printcolumn:name="ID",type=string,JSONPath=`.status.id`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="ID",type=string,JSONPath=`.status.externalID`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Monitor is the Schema for the monitors API

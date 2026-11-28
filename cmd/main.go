@@ -219,10 +219,6 @@ func main() {
 	cfg := upbot.NewConfiguration()
 	cfg.AddDefaultHeader("Authorization", fmt.Sprintf("Bearer %s", token))
 	apiClient := upbot.NewAPIClient(cfg)
-	if err != nil {
-		setupLog.Error(err, "unable to create Upbot API client")
-		os.Exit(1)
-	}
 
 	if err := (&controller.MonitorReconciler{
 		Client:    mgr.GetClient(),
@@ -233,6 +229,12 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// The chart's uninstall hook sets it so the Ingress watcher doesn't create the monitors it deletes again
+	if enableIngressWatcher && os.Getenv("UPBOT_UNINSTALLING") == "true" {
+		setupLog.Info("Uninstalling, the Ingress Watcher controller stays off")
+		enableIngressWatcher = false
+	}
 
 	if enableIngressWatcher {
 		setupLog.Info("Enabling Ingress Watcher controller", "interval", ingressWatcherInterval)

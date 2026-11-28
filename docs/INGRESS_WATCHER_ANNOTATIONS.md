@@ -51,14 +51,14 @@ kind: Ingress
 metadata:
   name: critical-app
   annotations:
-    upbot.app/interval: "10"  # Check every 10 seconds
+    upbot.app/interval: "30"  # Check every 30 seconds
 spec:
   # ... ingress spec
 ```
 
 **Behavior**:
 - Takes precedence over the global `--ingress-watcher-interval` flag
-- Must be a valid interval string (e.g., "10", "30", "60", "300")
+- Must be one of "30", "60", "120", "300" or "600" (seconds); any other value is ignored and the default is used
 
 ### `upbot.app/monitor`
 
@@ -94,8 +94,8 @@ metadata:
   annotations:
     # Custom health check endpoint
     upbot.app/path: "/api/health"
-    # Check every 15 seconds (critical service)
-    upbot.app/interval: "15"
+    # Check every 30 seconds (critical service)
+    upbot.app/interval: "30"
     # Monitoring is enabled (default, can be omitted)
     upbot.app/monitor: "true"
 spec:
@@ -118,7 +118,7 @@ spec:
 
 **Generated Monitor**:
 - **Target**: `https://api.example.com/api/health`
-- **Interval**: `15` seconds
+- **Interval**: `30` seconds
 - **Type**: `http`
 
 ## Labels and Annotations Added to Monitors
@@ -184,7 +184,7 @@ The Ingress Watcher adds metadata to created monitors for tracking:
 2. **Critical Services**: Use shorter intervals for important services
    ```yaml
    annotations:
-     upbot.app/interval: "10"
+     upbot.app/interval: "30"
    ```
 
 3. **Development/Staging**: Disable monitoring for non-production environments

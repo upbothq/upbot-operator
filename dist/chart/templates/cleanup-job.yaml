@@ -12,6 +12,7 @@ metadata:
     {{- include "chart.labels" . | nindent 4 }}
     app.kubernetes.io/component: cleanup
 spec:
+  backoffLimit: 1
   template:
     metadata:
       labels:
@@ -19,216 +20,91 @@ spec:
         app.kubernetes.io/component: cleanup
     spec:
       serviceAccountName: {{ include "chart.fullname" . }}-cleanup
-      restartPolicy: OnFailure
+      restartPolicy: Never
       containers:
       - name: cleanup
         image: {{ .Values.cleanup.image.repository }}:{{ .Values.cleanup.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.cleanup.image.pullPolicy }}
         env:
-        - name: UPBOT_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.upbot.apiKeyExistingSecret }}
-              key: "token"
         - name: CLEANUP_TIMEOUT
           value: {{ .Values.cleanup.timeout | quote }}
         - name: CLEANUP_DRY_RUN
           value: {{ .Values.cleanup.dryRun | quote }}
+        - name: OPERATOR_NAMESPACE
+          value: {{ .Release.Namespace | quote }}
+        - name: OPERATOR_DEPLOYMENT
+          value: upbot-operator-controller-manager
+        - name: INGRESS_WATCHER_ENABLED
+          value: {{ .Values.upbot.ingressWatcher.enable | quote }}
         command:
         - /bin/sh
         - -c
         - |
-          set -e
-          echo "Starting Upbot Operator cleanup process..."
-          
-          # Function to log with timestamp
+          # The operator still runs during this pre-delete hook: deleting the Monitor resources lets it delete
+          # each one from Upbot with its own ID. Monitors created in the Upbot dashboard are never touched.
           log() {
             echo "$(date '+%Y-%m-%d %H:%M:%S') $1"
           }
-          
-          # Function to call Upbot API
-          call_upbot_api() {
-            local method="$1"
-            local endpoint="$2"
-            local data="$3"
-            
-            if [ -n "$data" ]; then
-              curl -s -X "$method" \
-                -H "Authorization: Bearer $UPBOT_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "$data" \
-                "https://api.upbot.app/api/$endpoint"
-            else
-              curl -s -X "$method" \
-                -H "Authorization: Bearer $UPBOT_TOKEN" \
-                "https://api.upbot.app/api/$endpoint"
-            fi
+
+          list_monitors() {
+            kubectl get monitors.monitoring.upbot.app --all-namespaces \
+              -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.status.externalID}{"\n"}{end}' 2>/dev/null
           }
-          
-          # Function to cleanup monitors from Upbot API
-          cleanup_upbot_monitors() {
-            log "Fetching all monitors from Upbot API..."
-            
-            monitors=$(call_upbot_api "GET" "monitors")
-            if [ $? -ne 0 ]; then
-              log "ERROR: Failed to fetch monitors from Upbot API"
-              return 1
-            fi
-            
-            # Parse monitor IDs (assuming JSON response with data array)
-            monitor_ids=$(echo "$monitors" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 || true)
-            
-            if [ -z "$monitor_ids" ]; then
-              log "No monitors found in Upbot API"
-              return 0
-            fi
-            
-            monitor_count=$(echo "$monitor_ids" | wc -l)
-            log "Found $monitor_count monitors to delete"
-            
-            if [ "$CLEANUP_DRY_RUN" = "true" ]; then
-              log "DRY RUN MODE: Would delete the following monitors:"
-              echo "$monitor_ids" | while read -r id; do
-                log "  - Monitor ID: $id"
-              done
-              return 0
-            fi
-            
-            # Delete each monitor
-            failed_deletes=0
-            echo "$monitor_ids" | while read -r id; do
-              if [ -n "$id" ]; then
-                log "Deleting monitor: $id"
-                response=$(call_upbot_api "DELETE" "monitors/$id")
-                if [ $? -eq 0 ]; then
-                  log "Successfully deleted monitor: $id"
-                else
-                  log "WARNING: Failed to delete monitor: $id"
-                  failed_deletes=$((failed_deletes + 1))
-                fi
-                sleep 1  # Rate limiting
-              fi
-            done
-            
-            if [ $failed_deletes -gt 0 ]; then
-              log "WARNING: $failed_deletes monitors failed to delete"
-            else
-              log "All monitors deleted successfully from Upbot API"
-            fi
+
+          count_monitors() {
+            list_monitors | grep -c . || true
           }
-          
-          # Function to cleanup Kubernetes Monitor resources
-          cleanup_k8s_monitors() {
-            log "Fetching Monitor resources from Kubernetes..."
-            
-            # Check if kubectl is available and CRD exists
-            if ! command -v kubectl >/dev/null 2>&1; then
-              log "ERROR: kubectl not found in container"
-              return 1
-            fi
-            
-            # Get all Monitor resources across all namespaces
-            monitors=$(kubectl get monitors --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
-            if [ $? -ne 0 ]; then
-              log "WARNING: Failed to fetch Monitor resources (CRD might not exist)"
-              return 0
-            fi
-            
-            monitor_count=$(echo "$monitors" | grep -c '"name":' || echo "0")
-            log "Found $monitor_count Monitor resources in Kubernetes"
-            
-            if [ "$monitor_count" = "0" ]; then
-              log "No Monitor resources found in Kubernetes"
-              return 0
-            fi
-            
-            if [ "$CLEANUP_DRY_RUN" = "true" ]; then
-              log "DRY RUN MODE: Would delete the following Monitor resources:"
-              echo "$monitors" | grep -o '"namespace":"[^"]*","name":"[^"]*"' | while read -r monitor; do
-                namespace=$(echo "$monitor" | cut -d'"' -f4)
-                name=$(echo "$monitor" | cut -d'"' -f8)
-                log "  - Monitor: $namespace/$name"
-              done
-              return 0
-            fi
-            
-            # Force cleanup approach: remove finalizers and force delete monitors
-            log "Starting aggressive cleanup of Monitor resources..."
-            echo "$monitors" | grep -o '"namespace":"[^"]*","name":"[^"]*"' | while read -r monitor; do
-              namespace=$(echo "$monitor" | cut -d'"' -f4)
-              name=$(echo "$monitor" | cut -d'"' -f8)
-              
-              if [ -n "$namespace" ] && [ -n "$name" ]; then
-                log "Force cleaning Monitor: $namespace/$name"
-                
-                # Step 1: Remove finalizers
-                kubectl patch monitor "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-                
-                # Step 2: Try normal deletion first
-                kubectl delete monitor "$name" -n "$namespace" --ignore-not-found=true --timeout=10s 2>/dev/null
-                
-                # Step 3: If still exists, force delete
-                if kubectl get monitor "$name" -n "$namespace" >/dev/null 2>&1; then
-                  log "Monitor $namespace/$name still exists, force deleting..."
-                  kubectl delete monitor "$name" -n "$namespace" --force --grace-period=0 2>/dev/null || true
-                fi
-                
-                # Step 4: Verify deletion
-                if kubectl get monitor "$name" -n "$namespace" >/dev/null 2>&1; then
-                  log "WARNING: Monitor $namespace/$name could not be deleted"
-                else
-                  log "Successfully cleaned Monitor: $namespace/$name"
-                fi
-              fi
-            done
-            
-            # Wait a moment for cleanup to settle
-            sleep 3
-            
-            # Also try to delete the CRD if no monitors remain
-            remaining=$(kubectl get monitors --all-namespaces -o json 2>/dev/null | grep -c '"name":' || echo "0")
-            if [ "$remaining" = "0" ]; then
-              log "All Monitor resources deleted, removing CRD..."
-              kubectl delete crd monitors.monitoring.upbot.app --ignore-not-found=true --timeout=30s 2>/dev/null || true
-              log "CRD cleanup completed"
-            else
-              log "WARNING: $remaining Monitor resources still remain, not deleting CRD"
-            fi
-          }
-          
-          # Main cleanup process
-          log "=== Upbot Operator Cleanup Started ==="
-          
+
+          log "=== Upbot Operator cleanup started ==="
+
+          if ! kubectl get crd monitors.monitoring.upbot.app >/dev/null 2>&1; then
+            log "Monitor CRD not found, nothing to clean up"
+            exit 0
+          fi
+
           if [ "$CLEANUP_DRY_RUN" = "true" ]; then
-            log "Running in DRY RUN mode - no actual deletions will be performed"
+            log "DRY RUN: would delete these Monitor resources and their Upbot monitors:"
+            list_monitors | while read -r namespace name id; do
+              [ -n "$name" ] && log "  - $namespace/$name (Upbot ID: ${id:-none})"
+            done
+            exit 0
           fi
-          
-          cleanup_exit_code=0
-          
-          # Step 1: Cleanup Kubernetes Monitor resources first (to stop controller reconciliation)
-          if [ "${CLEANUP_K8S_RESOURCES:-true}" = "true" ]; then
-            log "Step 1: Cleaning up Kubernetes Monitor resources..."
-            cleanup_k8s_monitors || cleanup_exit_code=1
-          else
-            log "Step 1: Skipping Kubernetes resource cleanup (disabled)"
+
+          # The Ingress watcher would create the monitors of the Ingresses again as soon as they are deleted:
+          # restart the operator without it first
+          if [ "$INGRESS_WATCHER_ENABLED" = "true" ]; then
+            log "Restarting the operator without the Ingress watcher..."
+            kubectl -n "$OPERATOR_NAMESPACE" set env "deployment/$OPERATOR_DEPLOYMENT" UPBOT_UNINSTALLING=true
+            kubectl -n "$OPERATOR_NAMESPACE" rollout status "deployment/$OPERATOR_DEPLOYMENT" --timeout=120s \
+              || log "WARNING: the operator did not restart in time, monitors from Ingresses may be created again"
           fi
-          
-          # Step 2: Cleanup monitors from Upbot API (external cleanup)
-          if [ "${CLEANUP_UPBOT_API:-true}" = "true" ]; then
-            log "Step 2: Cleaning up monitors from Upbot API..."
-            cleanup_upbot_monitors || cleanup_exit_code=1
-          else
-            log "Step 2: Skipping Upbot API cleanup (disabled)"
+
+          log "Found $(count_monitors) Monitor resources, deleting them..."
+          kubectl delete monitors.monitoring.upbot.app --all --all-namespaces --wait=false
+
+          # The operator removes each finalizer once the monitor is deleted from Upbot
+          deadline=$(( $(date +%s) + CLEANUP_TIMEOUT ))
+          while [ "$(count_monitors)" -gt 0 ] && [ "$(date +%s)" -lt "$deadline" ]; do
+            log "Waiting for the operator, $(count_monitors) Monitor resources left..."
+            sleep 5
+          done
+
+          remaining=$(count_monitors)
+          if [ "$remaining" -eq 0 ]; then
+            log "=== All monitors deleted from Kubernetes and Upbot ==="
+            exit 0
           fi
-          
-          if [ $cleanup_exit_code -eq 0 ]; then
-            log "=== Upbot Operator Cleanup Completed Successfully ==="
-          else
-            log "=== Upbot Operator Cleanup Completed with Warnings ==="
-            log "Some cleanup operations may have failed, but this is non-fatal"
-          fi
-          
-          # Always exit successfully to not block Helm uninstall
+
+          # Don't block the uninstall: release the rest, their Upbot monitors stay and are listed here
+          log "WARNING: $remaining Monitor resources were not deleted in time (see the operator logs and their Ready condition)"
+          log "Removing their finalizer, delete these monitors in the Upbot dashboard:"
+          list_monitors | while read -r namespace name id; do
+            [ -z "$name" ] && continue
+            log "  - $namespace/$name (Upbot ID: ${id:-none})"
+            kubectl -n "$namespace" patch monitors.monitoring.upbot.app "$name" --type=merge -p '{"metadata":{"finalizers":null}}' || true
+          done
+
+          log "=== Upbot Operator cleanup completed with warnings ==="
           exit 0
         resources:
           {{- toYaml .Values.cleanup.resources | nindent 10 }}

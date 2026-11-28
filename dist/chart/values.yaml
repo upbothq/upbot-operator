@@ -84,7 +84,7 @@ upbot:
   apiKeyExistingSecret: "upbot-api-key"
   
   # Alternative: directly specify the API key (not recommended for production)
-  # This will create a secret automatically
+  # This will create a secret automatically and takes precedence over apiKeyExistingSecret
   # apiKey: "your-api-key-here"
 
   # [INGRESS WATCHER]: Configuration for automatic Monitor creation from Ingress resources
@@ -101,7 +101,8 @@ upbot:
 # [CLEANUP]: Configuration for cleanup when uninstalling the chart
 cleanup:
   # Enable cleanup job that runs before chart deletion
-  # This will delete all Monitor resources from both Kubernetes and Upbot API
+  # It deletes every Monitor resource while the operator still runs, so the operator deletes each one
+  # from Upbot. Monitors created in the Upbot dashboard are not touched, and the CRD stays (see crd.keep)
   enabled: true
   
   # Cleanup job image configuration
@@ -110,7 +111,8 @@ cleanup:
     tag: "1.28.13"
     pullPolicy: IfNotPresent
   
-  # Timeout for the cleanup job (in seconds)
+  # How long to wait for the operator to delete the monitors from Upbot (in seconds).
+  # Monitors still there after it have their finalizer removed, and stay in Upbot
   timeout: "300"
   
   # Dry run mode - if true, will only log what would be deleted without actually deleting

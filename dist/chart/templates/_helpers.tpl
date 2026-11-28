@@ -61,3 +61,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
     $hasValidating = true }}{{- end }}
 {{- end }}
 {{ $hasValidating }}}}{{- end }}
+
+
+{{/*
+Secret holding the Upbot API token: the one the chart creates from upbot.apiKey, else upbot.apiKeyExistingSecret
+*/}}
+{{- define "chart.upbotSecretName" -}}
+{{- if .Values.upbot.apiKey -}}
+{{ include "chart.fullname" . }}-upbot-api-key
+{{- else -}}
+{{ .Values.upbot.apiKeyExistingSecret }}
+{{- end -}}
+{{- end }}
