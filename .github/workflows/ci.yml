@@ -32,7 +32,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1.6
+          version: v2.15.0
 
       # Fails instead of fixing it in CI: the commit must carry go.mod, go.sum and the generated files
       - name: Check go.mod and generated files are up to date
