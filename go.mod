@@ -1,4 +1,4 @@
-module github.com/upbothq/operator
+module github.com/upbothq/upbot-operator
 
 go 1.24.0
 

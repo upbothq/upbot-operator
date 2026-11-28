@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/upbothq/operator/test/utils"
+	"github.com/upbothq/upbot-operator/test/utils"
 )
 
 var (

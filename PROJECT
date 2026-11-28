@@ -9,7 +9,7 @@ layout:
 plugins:
   helm.kubebuilder.io/v1-alpha: {}
 projectName: upbot-operator
-repo: github.com/upbothq/operator
+repo: github.com/upbothq/upbot-operator
 resources:
 - api:
     crdVersion: v1
@@ -18,6 +18,6 @@ resources:
   domain: upbot.app
   group: monitoring
   kind: Monitor
-  path: github.com/upbothq/operator/api/v1alpha1
+  path: github.com/upbothq/upbot-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

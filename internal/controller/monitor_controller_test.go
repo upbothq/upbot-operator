@@ -34,8 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	monitoringv1alpha1 "github.com/upbothq/operator/api/v1alpha1"
 	"github.com/upbothq/upbot-go-sdk"
+	monitoringv1alpha1 "github.com/upbothq/upbot-operator/api/v1alpha1"
 )
 
 type apiCall struct {

@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	monitoringv1alpha1 "github.com/upbothq/operator/api/v1alpha1"
+	monitoringv1alpha1 "github.com/upbothq/upbot-operator/api/v1alpha1"
 )
 
 const (
