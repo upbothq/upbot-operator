@@ -132,6 +132,7 @@ The Ingress Watcher adds metadata to created monitors for tracking:
 ### Annotations
 - `upbot.app/auto-generated: "true"` - Marks as automatically generated
 - `upbot.app/source-ingress: "namespace/ingress-name"` - Links to source ingress
+- `upbot.app/source-host: "api.example.com"` - The Ingress host this monitor checks
 
 ## Behavior Details
 
@@ -141,14 +142,20 @@ The Ingress Watcher adds metadata to created monitors for tracking:
 - Changes to `upbot.app/interval` update the monitoring frequency
 - Changes to `upbot.app/monitor` can enable/disable monitoring
 
+### One Monitor per Host
+- The first host's monitor has the Ingress name, the others get the Ingress name plus a hash of the host (`web-1a2b3c4d`)
+- An Ingress with no host to monitor (no rules, or only wildcard hosts) is skipped with a log line
+- A host whose URL is already checked by a Monitor you created by hand (without the `upbot.app/source: ingress-watcher` label) is skipped, so it isn't monitored twice
+
 ### Monitor Cleanup
+- When a host is removed from the ingress, its monitor is deleted
 - When an ingress is deleted, its monitor is automatically deleted
 - When `upbot.app/monitor` is set to `false`/`disabled`, the monitor is deleted
 - Only monitors created by the ingress watcher are managed (checked via labels)
 
 ### URL Generation
 1. **Scheme**: `https` if a `spec.tls` entry lists the host (or covers it with a wildcard like `*.example.com`, or lists no hosts), otherwise `http`
-2. **Host**: First host from `spec.rules[0].host`
+2. **Host**: One monitor per host in `spec.rules[].host`. Wildcard hosts (`*.example.com`) and rules without a host are skipped, since they have no URL to check
 3. **Path**: Value from `upbot.app/path` annotation (if provided)
 
 ### Priority Order for Interval
@@ -159,7 +166,8 @@ The Ingress Watcher adds metadata to created monitors for tracking:
 ## Troubleshooting
 
 ### Monitor Not Created
-- Check that the ingress has at least one rule with a host
+- Check that the ingress has at least one rule with a host that isn't a wildcard
+- Check that no Monitor created by hand already checks the same URL
 - Verify `upbot.app/monitor` is not set to `false` or `disabled`
 - Check operator logs for errors
 

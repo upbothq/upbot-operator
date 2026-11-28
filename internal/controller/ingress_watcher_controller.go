@@ -1,19 +1,32 @@
 package controller
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
-	monitoringv1alpha1 "github.com/upbothq/operator/api/v1alpha1"
-	"golang.org/x/net/context"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	monitoringv1alpha1 "github.com/upbothq/operator/api/v1alpha1"
+)
+
+const (
+	sourceLabel             = "upbot.app/source"
+	sourceIngressWatcher    = "ingress-watcher"
+	sourceIngressAnnotation = "upbot.app/source-ingress"
+	sourceHostAnnotation    = "upbot.app/source-host"
+	// Longest Kubernetes object name
+	maxObjectName = 253
 )
 
 type IngressWatcherReconciler struct {
@@ -25,71 +38,159 @@ type IngressWatcherReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=monitoring.upbot.app,resources=monitors,verbs=get;list;watch;create;update;patch;delete
 
+// Reconcile keeps one Monitor per host of the Ingress: it creates the missing ones, updates the ones that
+// changed and deletes the ones whose host is gone, or all of them when the Ingress is deleted or opts out.
 func (r *IngressWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling IngressWatcher")
+	logger.V(1).Info("Reconciling IngressWatcher")
+
+	var monitors monitoringv1alpha1.MonitorList
+	if err := r.List(ctx, &monitors, client.InNamespace(req.Namespace)); err != nil {
+		return ctrl.Result{}, err
+	}
+	owned, others := splitMonitors(monitors.Items, req.NamespacedName)
 
 	var ingress networkingv1.Ingress
 	if err := r.Get(ctx, req.NamespacedName, &ingress); err != nil {
-		if errors.IsNotFound(err) {
-			// Ingress not found. Could have been deleted after reconcile request.
-			// Check if there's an associated monitor that should be cleaned up
-			logger.Info("Ingress resource not found, checking for associated monitor to clean up")
-			return r.handleIngressDeletion(ctx, req.NamespacedName)
+		if apierrors.IsNotFound(err) {
+			// The owner reference lets the garbage collector delete them too, this is quicker
+			return ctrl.Result{}, r.deleteMonitors(ctx, owned, "Ingress deleted")
 		}
-		// Error reading the object - requeue the request.
-		logger.Error(err, "Failed to get Ingress")
 		return ctrl.Result{}, err
 	}
 
-	// Check if monitoring is disabled for this ingress
 	if monitoringDisabled(&ingress) {
-		logger.Info("Monitoring disabled for this ingress via annotation", "ingress", ingress.Name)
-		// Check if there's an existing monitor that should be cleaned up
-		return r.handleMonitorCleanupForDisabledIngress(ctx, req.NamespacedName)
+		return ctrl.Result{}, r.deleteMonitors(ctx, owned, "monitoring disabled by the upbot.app/monitor annotation")
 	}
 
-	// Check if the Monitor already exists, if not create a new one
-
-	monitorName := req.NamespacedName
-	var existingMonitor monitoringv1alpha1.Monitor
-	err := r.Get(ctx, monitorName, &existingMonitor)
-
-	if err != nil && !errors.IsNotFound(err) {
-		logger.Error(err, "Failed to get Monitor")
-		return ctrl.Result{}, err
+	hosts := monitoredHosts(&ingress)
+	if len(hosts) == 0 {
+		// Nothing to monitor until the Ingress changes: no error, it would be retried for nothing
+		logger.Info("Ingress has no host to monitor (no rules, no host or only wildcard hosts), skipping")
+		return ctrl.Result{}, r.deleteMonitors(ctx, owned, "no host to monitor")
 	}
 
-	if errors.IsNotFound(err) {
-		return r.createMonitorFromIngress(ctx, &ingress)
+	// Monitors created by hand already check these URLs: don't monitor them twice
+	manualTargets := map[string]bool{}
+	for _, monitor := range others {
+		manualTargets[monitor.Spec.Target] = true
 	}
 
-	// Monitor exists, check if it needs to be updated
-	return r.updateMonitorIfNeeded(ctx, &existingMonitor, &ingress)
+	takenNames := map[string]bool{}
+	for _, monitor := range monitors.Items {
+		takenNames[monitor.Name] = true
+	}
+
+	interval := r.intervalFor(ctx, &ingress)
+	byHost := map[string]*monitoringv1alpha1.Monitor{}
+	for i := range owned {
+		if host := monitorHost(&owned[i]); host != "" {
+			byHost[host] = &owned[i]
+		}
+	}
+
+	wanted := map[string]bool{}
+	for _, host := range hosts {
+		target := targetForHost(&ingress, host)
+		if manualTargets[target] {
+			logger.Info("A Monitor created by hand already checks this URL, skipping", "target", target)
+			continue
+		}
+		wanted[host] = true
+
+		if existing, ok := byHost[host]; ok {
+			if err := r.updateMonitor(ctx, existing, host, target, interval); err != nil {
+				return ctrl.Result{}, err
+			}
+			continue
+		}
+
+		name := monitorNameFor(ingress.Name, host, takenNames)
+		takenNames[name] = true
+		if err := r.createMonitor(ctx, &ingress, name, host, target, interval); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	var stale []monitoringv1alpha1.Monitor
+	for _, monitor := range owned {
+		if !wanted[monitorHost(&monitor)] {
+			stale = append(stale, monitor)
+		}
+	}
+	return ctrl.Result{}, r.deleteMonitors(ctx, stale, "host no longer in the Ingress")
 }
 
-func (r *IngressWatcherReconciler) createMonitorFromIngress(ctx context.Context, ingress *networkingv1.Ingress) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-	logger.Info("Creating Monitor for Ingress", "ingress", ingress.Name, "namespace", ingress.Namespace)
-
-	target, err := r.getTargetFromIngress(ingress)
-	if err != nil {
-		logger.Error(err, "Failed to get target from Ingress", "ingress", ingress.Name, "namespace", ingress.Namespace)
-		return ctrl.Result{}, err
+// splitMonitors separates the Monitors the watcher created for this Ingress from the others
+func splitMonitors(monitors []monitoringv1alpha1.Monitor, ingress client.ObjectKey) (owned, others []monitoringv1alpha1.Monitor) {
+	source := fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name)
+	for _, monitor := range monitors {
+		switch {
+		case monitor.Labels[sourceLabel] != sourceIngressWatcher:
+			others = append(others, monitor)
+		case monitor.Annotations[sourceIngressAnnotation] == source:
+			owned = append(owned, monitor)
+		}
 	}
+	return owned, others
+}
 
-	interval := r.intervalFor(ctx, ingress)
+// monitoredHosts lists the hosts of the Ingress rules once each, in order. A wildcard host has no URL to check.
+func monitoredHosts(ingress *networkingv1.Ingress) []string {
+	seen := map[string]bool{}
+	var hosts []string
+	for _, rule := range ingress.Spec.Rules {
+		host := strings.ToLower(rule.Host)
+		if host == "" || strings.HasPrefix(host, "*") || seen[host] {
+			continue
+		}
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+// monitorHost is the host a watcher Monitor checks. Monitors from before one Monitor per host have no
+// annotation: their target gives it.
+func monitorHost(monitor *monitoringv1alpha1.Monitor) string {
+	if host := monitor.Annotations[sourceHostAnnotation]; host != "" {
+		return host
+	}
+	if parsed, err := url.Parse(monitor.Spec.Target); err == nil {
+		return strings.ToLower(parsed.Hostname())
+	}
+	return ""
+}
+
+// monitorNameFor keeps the Ingress name for its first host, so an Ingress with one host still has a Monitor
+// of the same name, and adds a hash of the host for the others
+func monitorNameFor(ingressName, host string, taken map[string]bool) string {
+	if !taken[ingressName] {
+		return ingressName
+	}
+	sum := sha256.Sum256([]byte(host))
+	suffix := "-" + hex.EncodeToString(sum[:])[:8]
+	prefix := ingressName
+	if len(prefix)+len(suffix) > maxObjectName {
+		prefix = strings.TrimRight(prefix[:maxObjectName-len(suffix)], "-.")
+	}
+	return prefix + suffix
+}
+
+func (r *IngressWatcherReconciler) createMonitor(ctx context.Context, ingress *networkingv1.Ingress, name, host, target, interval string) error {
+	logger := log.FromContext(ctx)
 
 	monitor := &monitoringv1alpha1.Monitor{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ingress.Name,
+			Name:      name,
 			Namespace: ingress.Namespace,
 			Annotations: map[string]string{
 				"upbot.app/auto-generated": "true",
-				"upbot.app/source-ingress": fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name),
+				sourceIngressAnnotation:    fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name),
+				sourceHostAnnotation:       host,
 			},
 			Labels: map[string]string{
-				"upbot.app/source":      "ingress-watcher",
+				sourceLabel:             sourceIngressWatcher,
 				"upbot.app/target-type": "http",
 			},
 		},
@@ -101,155 +202,50 @@ func (r *IngressWatcherReconciler) createMonitorFromIngress(ctx context.Context,
 	}
 
 	if err := ctrl.SetControllerReference(ingress, monitor, r.Scheme); err != nil {
-		logger.Error(err, "Failed to set controller reference", "ingress", ingress.Name, "namespace", ingress.Namespace)
-		return ctrl.Result{}, err
+		return err
 	}
 
 	if err := r.Create(ctx, monitor); err != nil {
-		logger.Error(err, "Failed to create Monitor", "monitor", monitor.Name, "namespace", monitor.Namespace)
-		return ctrl.Result{}, err
+		logger.Error(err, "Failed to create Monitor", "monitor", name)
+		return err
 	}
-	logger.Info("Successfully created Monitor", "monitor", monitor.Name, "namespace", monitor.Namespace)
 
-	return ctrl.Result{}, nil
+	logger.Info("Created Monitor for Ingress host", "monitor", name, "target", target)
+	return nil
 }
 
-func (r *IngressWatcherReconciler) updateMonitorIfNeeded(ctx context.Context, monitor *monitoringv1alpha1.Monitor, ingress *networkingv1.Ingress) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Check if this monitor was created by the ingress watcher
-	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
-		logger.Info("Monitor not created by ingress watcher, skipping update", "monitor", monitor.Name)
-		return ctrl.Result{}, nil
+func (r *IngressWatcherReconciler) updateMonitor(ctx context.Context, monitor *monitoringv1alpha1.Monitor, host, target, interval string) error {
+	if monitor.Spec.Target == target && monitor.Spec.Interval == interval && monitor.Spec.Type == "http" &&
+		monitor.Annotations[sourceHostAnnotation] == host {
+		return nil
 	}
 
-	logger.Info("Checking if monitor needs update", "monitor", monitor.Name, "ingress", ingress.Name)
+	monitor.Spec.Target = target
+	monitor.Spec.Interval = interval
+	monitor.Spec.Type = "http"
+	if monitor.Annotations == nil {
+		monitor.Annotations = map[string]string{}
+	}
+	monitor.Annotations[sourceHostAnnotation] = host
 
-	needsUpdate := false
-
-	// Get the current target from ingress
-	expectedTarget, err := r.getTargetFromIngress(ingress)
-	if err != nil {
-		logger.Error(err, "Failed to get target from Ingress", "ingress", ingress.Name)
-		return ctrl.Result{}, err
+	if err := r.Update(ctx, monitor); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to update Monitor", "monitor", monitor.Name)
+		return err
 	}
 
-	logger.Info("Target comparison", "monitor", monitor.Name, "current", monitor.Spec.Target, "expected", expectedTarget)
+	log.FromContext(ctx).Info("Updated Monitor for Ingress host", "monitor", monitor.Name, "target", target, "interval", interval)
+	return nil
+}
 
-	expectedInterval := r.intervalFor(ctx, ingress)
-
-	logger.Info("Interval comparison", "monitor", monitor.Name, "current", monitor.Spec.Interval, "expected", expectedInterval)
-
-	// Check if target needs update
-	if monitor.Spec.Target != expectedTarget {
-		logger.Info("Target mismatch, updating monitor", "monitor", monitor.Name, "current", monitor.Spec.Target, "expected", expectedTarget)
-		monitor.Spec.Target = expectedTarget
-		needsUpdate = true
-	}
-
-	// Check if interval needs update
-	if monitor.Spec.Interval != expectedInterval {
-		logger.Info("Interval mismatch, updating monitor", "monitor", monitor.Name, "current", monitor.Spec.Interval, "expected", expectedInterval)
-		monitor.Spec.Interval = expectedInterval
-		needsUpdate = true
-	}
-
-	// Check if type needs update
-	if monitor.Spec.Type != "http" {
-		logger.Info("Type mismatch, updating monitor", "monitor", monitor.Name, "current", monitor.Spec.Type, "expected", "http")
-		monitor.Spec.Type = "http"
-		needsUpdate = true
-	}
-
-	if needsUpdate {
-		logger.Info("Updating monitor", "monitor", monitor.Name, "needsUpdate", needsUpdate)
-		if err := r.Update(ctx, monitor); err != nil {
-			logger.Error(err, "Failed to update Monitor", "monitor", monitor.Name)
-			return ctrl.Result{}, err
+func (r *IngressWatcherReconciler) deleteMonitors(ctx context.Context, monitors []monitoringv1alpha1.Monitor, reason string) error {
+	for i := range monitors {
+		if err := r.Delete(ctx, &monitors[i]); client.IgnoreNotFound(err) != nil {
+			log.FromContext(ctx).Error(err, "Failed to delete Monitor", "monitor", monitors[i].Name)
+			return err
 		}
-		logger.Info("Successfully updated Monitor", "monitor", monitor.Name)
-	} else {
-		logger.Info("Monitor is up to date", "monitor", monitor.Name)
+		log.FromContext(ctx).Info("Deleted Monitor", "monitor", monitors[i].Name, "reason", reason)
 	}
-
-	return ctrl.Result{}, nil
-}
-
-func (r *IngressWatcherReconciler) handleIngressDeletion(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Try to find the monitor associated with this ingress
-	var monitor monitoringv1alpha1.Monitor
-	err := r.Get(ctx, namespacedName, &monitor)
-
-	if errors.IsNotFound(err) {
-		// No monitor found, nothing to clean up
-		logger.Info("No associated monitor found for deleted ingress", "ingress", namespacedName)
-		return ctrl.Result{}, nil
-	}
-
-	if err != nil {
-		logger.Error(err, "Failed to get monitor for deleted ingress", "ingress", namespacedName)
-		return ctrl.Result{}, err
-	}
-
-	// Check if this monitor was created by the ingress watcher
-	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
-		logger.Info("Monitor not created by ingress watcher, not cleaning up", "monitor", monitor.Name)
-		return ctrl.Result{}, nil
-	}
-
-	// Check if this monitor was created for this specific ingress
-	expectedSourceAnnotation := fmt.Sprintf("%s/%s", namespacedName.Namespace, namespacedName.Name)
-	if monitor.Annotations["upbot.app/source-ingress"] != expectedSourceAnnotation {
-		logger.Info("Monitor not associated with this ingress, not cleaning up", "monitor", monitor.Name, "expected", expectedSourceAnnotation, "actual", monitor.Annotations["upbot.app/source-ingress"])
-		return ctrl.Result{}, nil
-	}
-
-	// Delete the monitor
-	logger.Info("Deleting monitor for deleted ingress", "monitor", monitor.Name, "ingress", namespacedName)
-	if err := r.Delete(ctx, &monitor); err != nil {
-		logger.Error(err, "Failed to delete monitor", "monitor", monitor.Name)
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Successfully deleted monitor for deleted ingress", "monitor", monitor.Name, "ingress", namespacedName)
-	return ctrl.Result{}, nil
-}
-
-func (r *IngressWatcherReconciler) handleMonitorCleanupForDisabledIngress(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Try to find the monitor associated with this ingress
-	var monitor monitoringv1alpha1.Monitor
-	err := r.Get(ctx, namespacedName, &monitor)
-
-	if errors.IsNotFound(err) {
-		// No monitor found, nothing to clean up
-		logger.Info("No monitor found for disabled ingress", "ingress", namespacedName)
-		return ctrl.Result{}, nil
-	}
-
-	if err != nil {
-		logger.Error(err, "Failed to get monitor for disabled ingress", "ingress", namespacedName)
-		return ctrl.Result{}, err
-	}
-
-	// Check if this monitor was created by the ingress watcher
-	if monitor.Labels["upbot.app/source"] != "ingress-watcher" {
-		logger.Info("Monitor not created by ingress watcher, not cleaning up", "monitor", monitor.Name)
-		return ctrl.Result{}, nil
-	}
-
-	// Delete the monitor since monitoring is disabled
-	logger.Info("Deleting monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
-	if err := r.Delete(ctx, &monitor); err != nil {
-		logger.Error(err, "Failed to delete monitor for disabled ingress", "monitor", monitor.Name)
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Successfully deleted monitor for disabled ingress", "monitor", monitor.Name, "ingress", namespacedName)
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // monitoringDisabled reads the upbot.app/monitor annotation: any false boolean ("false", "0", "False", "f"...)
@@ -311,38 +307,27 @@ func (r *IngressWatcherReconciler) intervalFor(ctx context.Context, ingress *net
 	return "30"
 }
 
-func (r *IngressWatcherReconciler) getTargetFromIngress(ingress *networkingv1.Ingress) (string, error) {
-	if len(ingress.Spec.Rules) == 0 {
-		return "", fmt.Errorf("no rules found in Ingress")
-	}
-
-	rule := ingress.Spec.Rules[0]
-	if rule.Host == "" {
-		return "", fmt.Errorf("no host found in Ingress rule")
-	}
-
+// targetForHost builds the URL to check: https when a TLS entry covers the host, then the upbot.app/path annotation
+func targetForHost(ingress *networkingv1.Ingress, host string) string {
 	scheme := "http"
-	if hostHasTLS(ingress, rule.Host) {
+	if hostHasTLS(ingress, host) {
 		scheme = "https"
 	}
 
-	// Start with base URL
-	target := fmt.Sprintf("%s://%s", scheme, rule.Host)
+	target := fmt.Sprintf("%s://%s", scheme, host)
 
-	// Check for custom path annotation
-	if customPath, exists := ingress.Annotations["upbot.app/path"]; exists && customPath != "" {
-		// Clean up the path - ensure it starts with / and handle trailing slashes
+	if customPath := ingress.Annotations["upbot.app/path"]; customPath != "" {
+		// Leading slash added, trailing slash removed unless the path is just "/"
 		if customPath[0] != '/' {
 			customPath = "/" + customPath
 		}
-		// Remove trailing slash unless it's just "/"
 		if len(customPath) > 1 && customPath[len(customPath)-1] == '/' {
 			customPath = customPath[:len(customPath)-1]
 		}
 		target += customPath
 	}
 
-	return target, nil
+	return target
 }
 
 func (r *IngressWatcherReconciler) SetupWithManager(mgr ctrl.Manager) error {

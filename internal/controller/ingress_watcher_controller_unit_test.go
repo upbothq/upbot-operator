@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -57,18 +58,53 @@ func TestTargetScheme(t *testing.T) {
 		{"wildcard not the apex", "example.com", []networkingv1.IngressTLS{{Hosts: []string{"*.example.com"}}}, "http://example.com"},
 	}
 
-	r := &IngressWatcherReconciler{}
 	for _, c := range cases {
-		ingress := &networkingv1.Ingress{Spec: networkingv1.IngressSpec{
-			TLS:   c.tls,
-			Rules: []networkingv1.IngressRule{{Host: c.host}},
-		}}
-		got, err := r.getTargetFromIngress(ingress)
-		if err != nil {
-			t.Fatalf("%s: %v", c.name, err)
-		}
-		if got != c.want {
+		ingress := &networkingv1.Ingress{Spec: networkingv1.IngressSpec{TLS: c.tls}}
+		if got := targetForHost(ingress, c.host); got != c.want {
 			t.Errorf("%s: target = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestMonitoredHosts(t *testing.T) {
+	ingress := &networkingv1.Ingress{Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{
+		{Host: "api.example.com"},
+		{Host: ""},
+		{Host: "*.example.com"},
+		{Host: "WWW.example.com"},
+		{Host: "api.example.com"},
+	}}}
+
+	got := monitoredHosts(ingress)
+	want := []string{"api.example.com", "www.example.com"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("hosts = %v, want %v", got, want)
+	}
+
+	if hosts := monitoredHosts(&networkingv1.Ingress{}); len(hosts) != 0 {
+		t.Errorf("an Ingress without rules has hosts %v", hosts)
+	}
+}
+
+func TestMonitorNameFor(t *testing.T) {
+	if got := monitorNameFor("web", "api.example.com", map[string]bool{}); got != "web" {
+		t.Errorf("first host: name = %q, want the Ingress name", got)
+	}
+
+	taken := map[string]bool{"web": true}
+	first := monitorNameFor("web", "www.example.com", taken)
+	if !strings.HasPrefix(first, "web-") || len(first) != len("web-")+8 {
+		t.Errorf("other host: name = %q, want web-<8 hex>", first)
+	}
+	if again := monitorNameFor("web", "www.example.com", taken); again != first {
+		t.Errorf("the name changes between calls: %q then %q", first, again)
+	}
+	if other := monitorNameFor("web", "api.example.com", taken); other == first {
+		t.Errorf("two hosts get the same name %q", first)
+	}
+
+	long := strings.Repeat("a", maxObjectName)
+	if got := monitorNameFor(long, "api.example.com", map[string]bool{long: true}); len(got) > maxObjectName {
+		t.Errorf("name is %d characters, over %d", len(got), maxObjectName)
 	}
 }
