@@ -18,10 +18,15 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -57,6 +62,9 @@ type MonitorReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	ApiClient *upbot.APIClient
+	// ResyncPeriod is how often a synced monitor is read back from Upbot to undo changes made there.
+	// Zero turns it off: the operator then only calls the API when the spec changes.
+	ResyncPeriod time.Duration
 }
 
 // +kubebuilder:rbac:groups=monitoring.upbot.app,resources=monitors,verbs=get;list;watch;create;update;patch;delete
@@ -89,11 +97,11 @@ func (r *MonitorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	// This generation is already in Upbot: status writes, finalizer changes and resyncs make no API call
+	// This generation is already in Upbot: only the periodic resync calls the API
 	if monitor.Status.ExternalID != "" &&
 		monitor.Status.ObservedGeneration == monitor.Generation &&
 		meta.IsStatusConditionTrue(monitor.Status.Conditions, conditionReady) {
-		return ctrl.Result{}, nil
+		return r.resync(ctx, &monitor)
 	}
 
 	if monitor.Status.ExternalID != "" {
@@ -146,8 +154,7 @@ func (r *MonitorReconciler) handleCreate(ctx context.Context, monitor *monitorin
 	externalID := *resp.Id
 	if err := r.patchStatus(ctx, monitor, func(m *monitoringv1alpha1.Monitor) {
 		m.Status.ExternalID = externalID
-		m.Status.ObservedGeneration = m.Generation
-		setReadyCondition(m, metav1.ConditionTrue, "Synced", "The monitor is in Upbot")
+		markSynced(m)
 	}); err != nil {
 		// The next reconcile would create the monitor a second time: log the ID so it can be found
 		logger.Error(err, "Created monitor in Upbot but failed to save its ID", "externalID", externalID)
@@ -155,7 +162,7 @@ func (r *MonitorReconciler) handleCreate(ctx context.Context, monitor *monitorin
 	}
 
 	logger.Info("Created monitor in Upbot", "externalID", externalID)
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.nextResync()}, nil
 }
 
 func (r *MonitorReconciler) handleUpdate(ctx context.Context, monitor *monitoringv1alpha1.Monitor) (ctrl.Result, error) {
@@ -175,30 +182,156 @@ func (r *MonitorReconciler) handleUpdate(ctx context.Context, monitor *monitorin
 		UpdateTheSpecifiedResourceInStorageRequest(updateRequest).Execute()
 	if err != nil {
 		if httpResp != nil && httpResp.StatusCode == http.StatusNotFound {
-			// Deleted in Upbot: forget the ID so the next reconcile creates it again
-			logger.Info("Monitor no longer exists in Upbot, creating it again", "externalID", monitor.Status.ExternalID)
-			if err := r.patchStatus(ctx, monitor, func(m *monitoringv1alpha1.Monitor) {
-				m.Status.ExternalID = ""
-				m.Status.ObservedGeneration = 0
-				setReadyCondition(m, metav1.ConditionFalse, "NotFoundInUpbot", "The monitor was deleted in Upbot and will be created again")
-			}); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: time.Second}, nil
+			return r.forgetDeletedMonitor(ctx, monitor)
 		}
 
 		return r.handleAPIError(ctx, monitor, "UpdateFailed", httpResp, err)
 	}
 
-	if err := r.patchStatus(ctx, monitor, func(m *monitoringv1alpha1.Monitor) {
-		m.Status.ObservedGeneration = m.Generation
-		setReadyCondition(m, metav1.ConditionTrue, "Synced", "The monitor is in Upbot")
-	}); err != nil {
+	if err := r.patchStatus(ctx, monitor, markSynced); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	logger.Info("Updated monitor in Upbot", "externalID", monitor.Status.ExternalID)
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.nextResync()}, nil
+}
+
+// nextResync is the ResyncPeriod plus up to 10% of jitter, so monitors synced together don't all call the API
+// in the same second. Zero when the resync is off.
+func (r *MonitorReconciler) nextResync() time.Duration {
+	if r.ResyncPeriod <= 0 {
+		return 0
+	}
+	return r.ResyncPeriod + rand.N(r.ResyncPeriod/10+1)
+}
+
+// markSynced records that this generation is in Upbot
+func markSynced(m *monitoringv1alpha1.Monitor) {
+	now := metav1.Now()
+	m.Status.ObservedGeneration = m.Generation
+	m.Status.LastSyncTime = &now
+	setReadyCondition(m, metav1.ConditionTrue, "Synced", "The monitor is in Upbot")
+}
+
+// forgetDeletedMonitor clears the ID of a monitor deleted in Upbot, so the next reconcile creates it again
+func (r *MonitorReconciler) forgetDeletedMonitor(ctx context.Context, monitor *monitoringv1alpha1.Monitor) (ctrl.Result, error) {
+	logf.FromContext(ctx).Info("Monitor no longer exists in Upbot, creating it again", "externalID", monitor.Status.ExternalID)
+	if err := r.patchStatus(ctx, monitor, func(m *monitoringv1alpha1.Monitor) {
+		m.Status.ExternalID = ""
+		m.Status.ObservedGeneration = 0
+		m.Status.LastSyncTime = nil
+		setReadyCondition(m, metav1.ConditionFalse, "NotFoundInUpbot", "The monitor was deleted in Upbot and will be created again")
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: time.Second}, nil
+}
+
+// resync reads a synced monitor back from Upbot once per ResyncPeriod: it creates it again when it was deleted there
+// and puts the spec back when it was edited there. Status writes in between make no API call.
+func (r *MonitorReconciler) resync(ctx context.Context, monitor *monitoringv1alpha1.Monitor) (ctrl.Result, error) {
+	if r.ResyncPeriod <= 0 {
+		return ctrl.Result{}, nil
+	}
+	if last := monitor.Status.LastSyncTime; last != nil {
+		if wait := r.ResyncPeriod - time.Since(last.Time); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
+	}
+
+	logger := logf.FromContext(ctx)
+	remote, httpResp, err := r.getRemoteMonitor(ctx, monitor.Status.ExternalID)
+	if err != nil {
+		if httpResp != nil && httpResp.StatusCode == http.StatusNotFound {
+			return r.forgetDeletedMonitor(ctx, monitor)
+		}
+		return r.handleAPIError(ctx, monitor, "ResyncFailed", httpResp, err)
+	}
+
+	if changed := remote.changedFields(monitor); len(changed) > 0 {
+		logger.Info("Monitor was changed in Upbot, restoring the spec", "externalID", monitor.Status.ExternalID, "fields", changed)
+		return r.handleUpdate(ctx, monitor)
+	}
+
+	if err := r.patchStatus(ctx, monitor, markSynced); err != nil {
+		return ctrl.Result{}, err
+	}
+	logger.V(1).Info("Monitor in Upbot matches the spec", "externalID", monitor.Status.ExternalID)
+	return ctrl.Result{RequeueAfter: r.nextResync()}, nil
+}
+
+// remoteMonitor holds the fields of a monitor in Upbot that the spec sets
+type remoteMonitor struct {
+	DisplayName string  `json:"display_name"`
+	Type        string  `json:"type"`
+	Target      *string `json:"target"`
+	Interval    *int    `json:"interval"`
+}
+
+// changedFields lists the spec fields that differ in Upbot
+func (remote *remoteMonitor) changedFields(monitor *monitoringv1alpha1.Monitor) []string {
+	var changed []string
+	if remote.DisplayName != upbotName(monitor) {
+		changed = append(changed, "name")
+	}
+	if remote.Type != monitor.Spec.Type {
+		changed = append(changed, "type")
+	}
+	if remote.Target == nil || *remote.Target != monitor.Spec.Target {
+		changed = append(changed, "target")
+	}
+	if remote.Interval == nil || strconv.Itoa(*remote.Interval) != monitor.Spec.Interval {
+		changed = append(changed, "interval")
+	}
+	return changed
+}
+
+// getRemoteMonitor reads a monitor from Upbot. The SDK has no method for GET /api/monitors/{id} yet,
+// so it sends the request itself with the SDK's server, headers and HTTP client.
+func (r *MonitorReconciler) getRemoteMonitor(ctx context.Context, id string) (*remoteMonitor, *http.Response, error) {
+	cfg := r.ApiClient.GetConfig()
+	base, err := cfg.ServerURLWithContext(ctx, "MonitorManagementAPIService.UpdateTheSpecifiedResourceInStorage")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(base, "/")+"/api/monitors/"+url.PathEscape(id), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if cfg.UserAgent != "" {
+		req.Header.Set("User-Agent", cfg.UserAgent)
+	}
+	for name, value := range cfg.DefaultHeader {
+		req.Header.Set(name, value)
+	}
+
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, resp, err
+	}
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, resp, fmt.Errorf("GET /api/monitors/%s: %s: %s", id, resp.Status, body)
+	}
+
+	var payload struct {
+		Data remoteMonitor `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, resp, fmt.Errorf("decoding the monitor from Upbot: %w", err)
+	}
+	return &payload.Data, resp, nil
 }
 
 // handleAPIError shows the API error on the Ready condition and picks when to try again

@@ -46,6 +46,10 @@ type MonitorStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// LastSyncTime is when the monitor in Upbot was last checked against the spec
+	// +optional
+	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
+
 	// Conditions hold the Ready condition, with the Upbot API error when the sync fails
 	// +optional
 	// +listType=map
@@ -61,6 +65,7 @@ type MonitorStatus struct {
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
 // +kubebuilder:printcolumn:name="ID",type=string,JSONPath=`.status.externalID`
+// +kubebuilder:printcolumn:name="Synced",type=date,JSONPath=`.status.lastSyncTime`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Monitor is the Schema for the monitors API

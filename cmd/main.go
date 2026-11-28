@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -64,6 +65,7 @@ func main() {
 	var enableLeaderElection bool
 	var enableIngressWatcher bool
 	var ingressWatcherInterval string
+	var resyncPeriod time.Duration
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -78,6 +80,8 @@ func main() {
 		"Enable the Ingress Watcher controller that automatically creates Monitor resources for Ingress resources.")
 	flag.StringVar(&ingressWatcherInterval, "ingress-watcher-interval", "30",
 		"Default interval for monitors created by the Ingress Watcher (e.g., '30', '60', '300').")
+	flag.DurationVar(&resyncPeriod, "resync-period", 10*time.Minute,
+		"How often each Monitor is read back from Upbot to undo changes and deletions made there. 0 turns it off.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
@@ -221,9 +225,10 @@ func main() {
 	apiClient := upbot.NewAPIClient(cfg)
 
 	if err := (&controller.MonitorReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		ApiClient: apiClient,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		ApiClient:    apiClient,
+		ResyncPeriod: resyncPeriod,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Monitor")
 		os.Exit(1)

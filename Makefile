@@ -80,6 +80,11 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	@# The chart keeps its Helm header and takes the generated CRD below it
+	@{ awk '/^spec:/{exit} {print}' $(CHART_CRD); awk '/^spec:/{f=1} f' config/crd/bases/monitoring.upbot.app_monitors.yaml; echo '{{- end -}}'; } > $(CHART_CRD).tmp
+	@mv $(CHART_CRD).tmp $(CHART_CRD)
+
+CHART_CRD = dist/chart/templates/crd/monitoring.upbot.app_monitors.yaml
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

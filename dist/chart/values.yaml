@@ -87,6 +87,10 @@ upbot:
   # This will create a secret automatically and takes precedence over apiKeyExistingSecret
   # apiKey: "your-api-key-here"
 
+  # How often each Monitor is read back from Upbot: changes made in the Upbot dashboard are undone and
+  # monitors deleted there are created again. One API call per Monitor and period, "0" turns it off
+  resyncPeriod: "10m"
+
   # [INGRESS WATCHER]: Configuration for automatic Monitor creation from Ingress resources
   ingressWatcher:
     # Set to true to enable automatic Monitor creation for Ingress resources

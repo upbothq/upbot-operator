@@ -34,6 +34,10 @@ spec:
     - jsonPath: .status.externalID
       name: ID
       type: string
+    - jsonPath: .status.lastSyncTime
+      name: Synced
+      priority: 1
+      type: date
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -156,6 +160,11 @@ spec:
                 x-kubernetes-list-type: map
               externalID:
                 description: ExternalID is the ID of the monitor in Upbot
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is when the monitor in Upbot was last checked
+                  against the spec
+                format: date-time
                 type: string
               observedGeneration:
                 description: ObservedGeneration is the generation last sent to Upbot

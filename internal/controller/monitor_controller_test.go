@@ -57,8 +57,12 @@ type fakeResponse struct {
 	body   string
 }
 
+// syncedMonitorJSON is the monitor of the test spec as the API returns it
+const syncedMonitorJSON = `{"data":{"id":"ext-1","display_name":"default/test-resource","type":"http","target":"https://example.com","interval":60}}`
+
 func newFakeUpbot() *fakeUpbot {
 	f := &fakeUpbot{responses: map[string]fakeResponse{
+		http.MethodGet:    {http.StatusOK, syncedMonitorJSON},
 		http.MethodPost:   {http.StatusCreated, `{"id":"ext-1"}`},
 		http.MethodPut:    {http.StatusOK, `{"data":{}}`},
 		http.MethodDelete: {http.StatusNoContent, ``},
@@ -227,6 +231,88 @@ var _ = Describe("Monitor Controller", func() {
 		})
 
 		Expect(reconcileOnce().RequeueAfter).To(Equal(42 * time.Second))
+	})
+
+	Context("with a resync period", func() {
+		const period = 10 * time.Minute
+
+		// ageLastSync moves the last sync back by more than the period
+		ageLastSync := func() {
+			GinkgoHelper()
+			monitor := getMonitor()
+			base := monitor.DeepCopy()
+			past := metav1.NewTime(time.Now().Add(-2 * period))
+			monitor.Status.LastSyncTime = &past
+			Expect(k8sClient.Status().Patch(ctx, monitor, client.MergeFrom(base))).To(Succeed())
+		}
+
+		BeforeEach(func() {
+			reconciler.ResyncPeriod = period
+			result := reconcileOnce()
+			Expect(result.RequeueAfter).To(BeNumerically(">=", period))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", period+period/10))
+			api.takeCalls()
+			Expect(getMonitor().Status.LastSyncTime).NotTo(BeNil())
+		})
+
+		It("makes no API call before the period is over", func() {
+			result := reconcileOnce()
+			Expect(api.takeCalls()).To(BeEmpty())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", period))
+		})
+
+		It("reads the monitor back and only updates the sync time when Upbot matches the spec", func() {
+			ageLastSync()
+			reconcileOnce()
+
+			calls := api.takeCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Method).To(Equal(http.MethodGet))
+			Expect(calls[0].Path).To(Equal("/api/monitors/ext-1"))
+			Expect(time.Since(getMonitor().Status.LastSyncTime.Time)).To(BeNumerically("<", time.Minute))
+		})
+
+		It("puts the spec back when the monitor was edited in Upbot", func() {
+			api.respond(http.MethodGet, http.StatusOK,
+				`{"data":{"id":"ext-1","display_name":"renamed","type":"http","target":"https://example.com","interval":600}}`)
+			ageLastSync()
+			reconcileOnce()
+
+			calls := api.takeCalls()
+			Expect(calls).To(HaveLen(2))
+			Expect(calls[0].Method).To(Equal(http.MethodGet))
+			Expect(calls[1].Method).To(Equal(http.MethodPut))
+			Expect(calls[1].Body).To(HaveKeyWithValue("name", "default/test-resource"))
+			Expect(calls[1].Body).To(HaveKeyWithValue("interval", "60"))
+		})
+
+		It("creates the monitor again when it was deleted in Upbot", func() {
+			api.respond(http.MethodGet, http.StatusNotFound, `{"message":"Not found"}`)
+			api.respond(http.MethodPost, http.StatusCreated, `{"id":"ext-2"}`)
+			ageLastSync()
+			reconcileOnce()
+			Expect(getMonitor().Status.ExternalID).To(BeEmpty())
+
+			reconcileOnce()
+			Expect(getMonitor().Status.ExternalID).To(Equal("ext-2"))
+
+			calls := api.takeCalls()
+			Expect(calls).To(HaveLen(2))
+			Expect(calls[0].Method).To(Equal(http.MethodGet))
+			Expect(calls[1].Method).To(Equal(http.MethodPost))
+		})
+
+		It("shows a revoked token on the Ready condition", func() {
+			api.respond(http.MethodGet, http.StatusUnauthorized, `{"message":"Unauthenticated."}`)
+			ageLastSync()
+			Expect(reconcileOnce().RequeueAfter).To(Equal(clientErrorRequeue))
+
+			condition := meta.FindStatusCondition(getMonitor().Status.Conditions, conditionReady)
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("ResyncFailed"))
+			Expect(condition.Message).To(ContainSubstring("Unauthenticated"))
+		})
 	})
 
 	It("deletes the monitor from Upbot before releasing the finalizer", func() {
