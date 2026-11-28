@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
     control-plane: controller-manager
-  name: upbot-operator-controller-manager-metrics-monitor
+  name: {{ include "chart.fullname" . }}-controller-manager-metrics-monitor
   namespace: {{ .Release.Namespace }}
 spec:
   endpoints:
@@ -16,19 +16,19 @@ spec:
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
         {{- if .Values.certmanager.enable }}
-        serverName: upbot-operator-controller-manager-metrics-service.{{ .Release.Namespace }}.svc
+        serverName: {{ include "chart.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc
         # Apply secure TLS configuration with cert-manager
         insecureSkipVerify: false
         ca:
           secret:
-            name: metrics-server-cert
+            name: {{ include "chart.fullname" . }}-metrics-server-cert
             key: ca.crt
         cert:
           secret:
-            name: metrics-server-cert
+            name: {{ include "chart.fullname" . }}-metrics-server-cert
             key: tls.crt
         keySecret:
-          name: metrics-server-cert
+          name: {{ include "chart.fullname" . }}-metrics-server-cert
           key: tls.key
         {{- else }}
         # Development/Test mode (insecure configuration)
@@ -36,5 +36,6 @@ spec:
         {{- end }}
   selector:
     matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
       control-plane: controller-manager
 {{- end }}

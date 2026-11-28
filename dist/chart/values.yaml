@@ -38,7 +38,8 @@ controllerManager:
     seccompProfile:
       type: RuntimeDefault
   terminationGracePeriodSeconds: 10
-  serviceAccountName: upbot-operator-controller-manager
+  # Defaults to <release fullname>-controller-manager
+  serviceAccountName: ""
 
 # [RBAC]: To enable RBAC (Permissions) configurations
 rbac:

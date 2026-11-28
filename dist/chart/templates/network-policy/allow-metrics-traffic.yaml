@@ -7,13 +7,13 @@ kind: NetworkPolicy
 metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
-  name: allow-metrics-traffic
+  name: {{ include "chart.fullname" . }}-allow-metrics-traffic
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
     matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
       control-plane: controller-manager
-      app.kubernetes.io/name: upbot-operator
   policyTypes:
     - Ingress
   ingress:

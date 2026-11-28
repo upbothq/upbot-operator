@@ -4,7 +4,7 @@ kind: ClusterRole
 metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
-  name: upbot-operator-metrics-reader
+  name: {{ include "chart.fullname" . }}-metrics-reader
 rules:
 - nonResourceURLs:
   - "/metrics"

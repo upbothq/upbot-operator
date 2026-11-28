@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: upbot-operator-controller-manager
+  name: {{ include "chart.managerName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "chart.labels" . | nindent 4 }}
@@ -71,13 +71,13 @@ spec:
           {{- end }}
       securityContext:
         {{- toYaml .Values.controllerManager.securityContext | nindent 8 }}
-      serviceAccountName: {{ .Values.controllerManager.serviceAccountName }}
+      serviceAccountName: {{ include "chart.serviceAccountName" . }}
       terminationGracePeriodSeconds: {{ .Values.controllerManager.terminationGracePeriodSeconds }}
       {{- if and .Values.certmanager.enable .Values.metrics.enable }}
       volumes:
         {{- if and .Values.metrics.enable .Values.certmanager.enable }}
         - name: metrics-certs
           secret:
-            secretName: metrics-server-cert
+            secretName: {{ include "chart.fullname" . }}-metrics-server-cert
         {{- end }}
       {{- end }}

@@ -5,13 +5,13 @@ metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
   namespace: {{ .Release.Namespace }}
-  name: upbot-operator-leader-election-rolebinding
+  name: {{ include "chart.fullname" . }}-leader-election-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: upbot-operator-leader-election-role
+  name: {{ include "chart.fullname" . }}-leader-election-role
 subjects:
 - kind: ServiceAccount
-  name: {{ .Values.controllerManager.serviceAccountName }}
+  name: {{ include "chart.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}
 {{- end -}}

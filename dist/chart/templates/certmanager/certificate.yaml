@@ -5,7 +5,7 @@ kind: Issuer
 metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
-  name: selfsigned-issuer
+  name: {{ include "chart.fullname" . }}-selfsigned-issuer
   namespace: {{ .Release.Namespace }}
 spec:
   selfSigned: {}
@@ -21,16 +21,15 @@ metadata:
     {{- end }}
   labels:
     {{- include "chart.labels" . | nindent 4 }}
-  name: metrics-certs
+  name: {{ include "chart.fullname" . }}-metrics-certs
   namespace: {{ .Release.Namespace }}
 spec:
   dnsNames:
-    - upbot-operator.{{ .Release.Namespace }}.svc
-    - upbot-operator.{{ .Release.Namespace }}.svc.cluster.local
-    - upbot-operator-metrics-service.{{ .Release.Namespace }}.svc
+    - {{ include "chart.managerName" . }}-metrics-service.{{ .Release.Namespace }}.svc
+    - {{ include "chart.managerName" . }}-metrics-service.{{ .Release.Namespace }}.svc.cluster.local
   issuerRef:
     kind: Issuer
-    name: selfsigned-issuer
-  secretName: metrics-server-cert
+    name: {{ include "chart.fullname" . }}-selfsigned-issuer
+  secretName: {{ include "chart.fullname" . }}-metrics-server-cert
 {{- end }}
 {{- end }}

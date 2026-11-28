@@ -26,6 +26,19 @@
 {{- end }}
 
 
+{{/*
+Operator Deployment, and the prefix of the resources that belong to it. A release named upbot-operator keeps
+the names the chart always used: upbot-operator-controller-manager.
+*/}}
+{{- define "chart.managerName" -}}
+{{- printf "%s-controller-manager" (include "chart.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "chart.serviceAccountName" -}}
+{{- .Values.controllerManager.serviceAccountName | default (include "chart.managerName" .) }}
+{{- end }}
+
+
 {{- define "chart.labels" -}}
 {{- if .Chart.AppVersion -}}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}

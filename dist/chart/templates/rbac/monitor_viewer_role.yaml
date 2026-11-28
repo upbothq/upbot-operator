@@ -11,7 +11,7 @@ kind: ClusterRole
 metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
-  name: monitor-viewer-role
+  name: {{ include "chart.fullname" . }}-monitor-viewer-role
 rules:
 - apiGroups:
   - monitoring.upbot.app
