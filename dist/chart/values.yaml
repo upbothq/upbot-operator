@@ -247,7 +247,7 @@ cleanup:
   # Cleanup job image configuration
   image:
     repository: alpine/k8s
-    tag: "1.28.13"
+    tag: "1.37.2"
     pullPolicy: IfNotPresent
 
   # How long to wait for the operator to delete the monitors from Upbot (in seconds).
