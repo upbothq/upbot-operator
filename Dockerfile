@@ -1,5 +1,6 @@
-# Build the manager binary
-FROM golang:1.24 AS builder
+# Build the manager binary on the build platform: Go cross-compiles to TARGETARCH, so a multi-arch build
+# needs no emulation
+FROM --platform=$BUILDPLATFORM golang:1.24 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev

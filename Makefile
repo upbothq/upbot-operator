@@ -169,22 +169,16 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
-# - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
+# PLATFORMS are the platforms of a multi-arch image (i.e. make docker-buildx IMG=myregistry/myoperator:0.0.1).
+# Releases are built by the Release workflow, this target is for pushing a test image to your own registry.
+PLATFORMS ?= linux/amd64,linux/arm64
 .PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
+docker-buildx: ## Build and push a multi-arch docker image for the manager
 	- $(CONTAINER_TOOL) buildx create --name upbot-operator-builder
 	$(CONTAINER_TOOL) buildx use upbot-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} \
+		--build-arg VERSION=$(VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) .
 	- $(CONTAINER_TOOL) buildx rm upbot-operator-builder
-	rm Dockerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
@@ -281,35 +275,9 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 ##@ Release
 
 .PHONY: release
-release: ## Create a new release (tag, build, push, bump, Helm, GitHub release)
-	@set -e; \
-	current=$$(cat VERSION); \
-	echo ">>> Releasing version $$current"; \
-	echo ">>> Building Docker image"; \
-	$(MAKE) docker-buildx; \
-	echo ">>> Updating Helm chart"; \
-	$(MAKE) update-helm-chart; \
-	\
-	echo ">>> Committing release version"; \
-	git add VERSION dist/chart/Chart.yaml; \
-	git commit -m "chore(release): $$current"; \
-	git push origin HEAD; \
-	\
-	\
-	echo ">>> Creating Git tag v$$current"; \
-	git tag -a "v$$current" -m "Release v$$current"; \
-	git push origin HEAD --tags; \
-	\
-	echo ">>> Creating GitHub release"; \
-	if command -v gh >/dev/null 2>&1; then \
-		gh release create "v$$current" \
-			--title "v$$current" \
-			--notes "Automated release of Upbot Operator version $$current"; \
-	else \
-		echo "⚠️ GitHub CLI (gh) not installed. Skipping GitHub release."; \
-	fi; \
-	\
-	echo "✅ Release v$$current completed."
+release: ## Start the Release workflow on main (BUMP=patch|minor|major, default patch)
+	gh workflow run release.yml --repo upbothq/upbot-operator --ref main -f bump=$(or $(BUMP),patch)
+	@echo "Follow it with: gh run watch --repo upbothq/upbot-operator"
 
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist

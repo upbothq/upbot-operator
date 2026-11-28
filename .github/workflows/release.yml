@@ -1,0 +1,192 @@
+name: Release
+
+# Bumps VERSION and the chart, tags the release, then publishes the image and the chart.
+# The version commit and tag are pushed before anything is published under `latest` or in a release:
+# when the push fails (main moved), a rerun releases the same version again.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/upbothq/upbot-operator
+  CHART_REGISTRY: oci://ghcr.io/upbothq/charts
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to release from another branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main, not ${GITHUB_REF}"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: make test
+
+  release:
+    name: Release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # release commit, tag, GitHub release, gh-pages index
+      packages: write # image and chart on GHCR
+      id-token: write # keyless cosign signature
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the release notes
+
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Make reads VERSION when it starts, so the chart is updated in a second call
+      - name: Bump version
+        id: version
+        run: |
+          previous=$(git describe --tags --abbrev=0)
+          make version-bump-${{ inputs.bump }}
+          make update-helm-chart
+          version=$(cat VERSION)
+          if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
+            echo "::error::Tag v${version} already exists"
+            exit 1
+          fi
+          git add VERSION dist/chart/Chart.yaml
+          git commit -m "chore(release): ${version}"
+          git tag -a "v${version}" -m "Release v${version}"
+          {
+            echo "version=${version}"
+            echo "previous=${previous}"
+            echo "commit=$(git rev-parse --short HEAD)"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Dockerfile cross-compiles from the runner's platform, so arm64 needs no emulation
+      - name: Build and push image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:v${{ steps.version.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+            BUILD_DATE=${{ steps.version.outputs.date }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        run: cosign sign --yes "${IMAGE}@${{ steps.image.outputs.digest }}"
+
+      - uses: azure/setup-helm@v4
+
+      - name: Package chart
+        run: helm package dist/chart --destination .chart
+
+      - name: Push release commit and tag
+        run: git push --atomic origin HEAD:main "v${{ steps.version.outputs.version }}"
+
+      - name: Tag image as latest
+        run: docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${{ steps.image.outputs.digest }}"
+
+      - name: Push chart to GHCR
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          helm push ".chart/upbot-operator-${VERSION}.tgz" "${CHART_REGISTRY}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          {
+            echo "## Changes"
+            echo
+            git log --no-merges --format='- %s (%h)' "${PREVIOUS}..HEAD" | grep -v 'chore(release)' || echo "- No changes"
+            echo
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "helm install upbot-operator ${CHART_REGISTRY}/upbot-operator --version ${VERSION} \\"
+            echo "  --namespace upbot-operator-system --create-namespace"
+            echo '```'
+            echo
+            echo "Image: \`${IMAGE}:v${VERSION}\` (\`${DIGEST}\`)"
+            echo
+            echo "**Full changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS}...v${VERSION}"
+          } > release-notes.md
+          gh release create "v${VERSION}" ".chart/upbot-operator-${VERSION}.tgz" \
+            --title "v${VERSION}" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      # Keeps `helm repo add` and Artifact Hub working: only index.yaml changes on gh-pages,
+      # the chart archives stay attached to the GitHub releases
+      - name: Update Helm repository index
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git fetch origin gh-pages
+          git worktree add gh-pages origin/gh-pages
+          helm repo index .chart \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}" \
+            --merge gh-pages/index.yaml
+          cp .chart/index.yaml gh-pages/index.yaml
+          cd gh-pages
+          git add index.yaml
+          git commit -m "Release v${VERSION}"
+          git push origin HEAD:gh-pages
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "## Released v${VERSION}"
+            echo "- Image: \`${IMAGE}:v${VERSION}\` and \`latest\`, signed"
+            echo "- Chart: \`${CHART_REGISTRY}/upbot-operator:${VERSION}\` and the gh-pages Helm repository"
+            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"

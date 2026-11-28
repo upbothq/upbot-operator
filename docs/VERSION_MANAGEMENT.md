@@ -1,281 +1,59 @@
-# Version Management Guide
+# Releasing
 
-This document explains how to manage versions for the Upbot Operator project.
+Releases are made by the **Release** workflow (`.github/workflows/release.yml`), from `main`, never from a laptop.
 
-## Overview
+## Make a release
 
-The project uses a centralized version management system with the following components:
+From GitHub: Actions → Release → Run workflow, pick the bump (`patch`, `minor` or `major`).
 
-- **VERSION file**: Single source of truth for the current version
-- **Makefile**: Contains version-related targets and build logic
-- **Docker builds**: Automatically tagged with proper version information
-- **Helm chart**: Synchronized with the main version
-- **GitHub workflows**: Automated building, testing, and releasing
+From a terminal, with the GitHub CLI:
 
-## Version Format
-
-We follow [Semantic Versioning](https://semver.org/):
-- **MAJOR.MINOR.PATCH** (e.g., 1.2.3)
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes (backward compatible)
-
-## Version Management Commands
-
-### Check Current Version
-
-```bash
-make version
+```sh
+make release              # patch
+make release BUMP=minor
+gh run watch --repo upbothq/upbot-operator
 ```
 
-### Bump Version
+## What the workflow does
 
-```bash
-# Bump patch version (1.2.3 -> 1.2.4)
-make version-bump-patch
+1. Runs `make test`.
+2. Bumps `VERSION`, sets `version` and `appVersion` in `dist/chart/Chart.yaml`, commits `chore(release): X.Y.Z` and tags `vX.Y.Z`.
+3. Builds the image for `linux/amd64` and `linux/arm64` (Go cross-compiles, no emulation), with an SBOM and provenance, pushes `ghcr.io/upbothq/upbot-operator:vX.Y.Z` and signs it with cosign (keyless).
+4. Pushes the release commit and the tag to `main`. If `main` moved during the run, the push fails before anything else is published: run the workflow again, it releases the same version.
+5. Moves the `latest` image tag to the new image.
+6. Pushes the chart to `oci://ghcr.io/upbothq/charts/upbot-operator`.
+7. Creates the GitHub release with the chart archive and notes made from the commit subjects since the last tag.
+8. Adds the version to `index.yaml` on `gh-pages`, the Helm repository Artifact Hub reads.
 
-# Bump minor version (1.2.3 -> 1.3.0)
-make version-bump-minor
+Everything runs with the workflow's `GITHUB_TOKEN`, no personal token is needed.
 
-# Bump major version (1.2.3 -> 2.0.0)
-make version-bump-major
+## Install a release
+
+```sh
+helm install upbot-operator oci://ghcr.io/upbothq/charts/upbot-operator --version X.Y.Z \
+  --namespace upbot-operator-system --create-namespace
 ```
 
-### Update Helm Chart
+The gh-pages Helm repository keeps working for existing installs.
 
-```bash
-make update-helm-chart
+## Verify an image
+
+```sh
+cosign verify ghcr.io/upbothq/upbot-operator:vX.Y.Z \
+  --certificate-identity-regexp '^https://github.com/upbothq/upbot-operator/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-## Docker Image Management
+## Versions
 
-### Build Images
+- `VERSION` is the version of the last release; only the workflow changes it.
+- The Lint workflow fails when `VERSION` and the chart disagree.
+- Commit subjects become the release notes, so write them as [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, …).
 
-```bash
-# Build with current version
-make docker-build
+## Test image
 
-# Build and tag with version + latest
-make docker-build-and-tag
+To try a build in a cluster without releasing, push it to your own registry:
 
-# Push images
-make docker-push
+```sh
+make docker-buildx IMG=<registry>/upbot-operator:test
 ```
-
-### Image Tags
-
-Images are tagged as:
-- `ghcr.io/upbothq/upbot-operator:VERSION` (e.g., `ghcr.io/upbothq/upbot-operator:1.2.3`)
-- `ghcr.io/upbothq/upbot-operator:latest` (for releases)
-
-## Automated Workflows
-
-### Docker Build (`docker-build.yml`)
-
-Triggers on:
-- Push to `main` or `develop` branches
-- Pull requests to `main`
-- Git tags starting with `v`
-
-**Optimized Build Strategy:**
-- Uses native ARM64 runners (`ubuntu-24.04-arm64`) for ARM64 builds
-- Uses standard AMD64 runners (`ubuntu-latest`) for AMD64 builds
-- Builds in parallel for faster execution
-- Creates multi-architecture manifests automatically
-
-### Release (`release.yml`)
-
-Triggers on:
-- Git tags starting with `v`
-- Manual workflow dispatch
-
-**Optimized Release Process:**
-1. **Parallel Build Phase:** Builds Docker images on native runners (AMD64 + ARM64)
-2. **Release Phase:** Creates manifests, packages Helm chart, and publishes release
-
-Creates a full release with:
-- Multi-architecture Docker images (native builds)
-- Helm chart with proper versioning
-- GitHub release with installation manifests
-- Updated GitHub Pages documentation
-
-### Version Bump (`version-bump.yml`)
-
-Manual workflow to:
-- Bump version (patch/minor/major)
-- Update Helm chart
-- Commit changes
-
-### Helm Chart Publishing (`publish-helm.yml`)
-
-Triggers on:
-- Changes to `dist/chart/**` or `VERSION` file
-- Manual workflow dispatch
-
-Updates and publishes Helm chart to GitHub Pages.
-
-## Development Workflow
-
-### 1. Feature Development
-
-```bash
-# Work on feature branch
-git checkout -b feature/my-feature
-
-# Make changes
-# ...
-
-# Test locally
-make test
-make docker-build
-
-# Create PR
-```
-
-### 2. Preparing for Release
-
-```bash
-# Switch to main branch
-git checkout main
-git pull origin main
-
-# Bump version (choose appropriate type)
-make version-bump-patch  # or minor/major
-
-# Update helm chart
-make update-helm-chart
-
-# Commit changes
-git add VERSION dist/chart/Chart.yaml
-git commit -m "chore: bump version to $(cat VERSION)"
-git push origin main
-```
-
-### 3. Creating a Release
-
-#### Option A: Git Tag (Recommended)
-
-```bash
-# Create and push tag
-VERSION=$(cat VERSION)
-git tag -a "v${VERSION}" -m "Release v${VERSION}"
-git push origin "v${VERSION}"
-```
-
-#### Option B: Manual Workflow
-
-Go to GitHub Actions → Release workflow → Run workflow
-
-### 4. Hotfix Release
-
-```bash
-# Create hotfix branch from tag
-git checkout -b hotfix/v1.2.4 v1.2.3
-
-# Make fixes
-# ...
-
-# Bump patch version
-make version-bump-patch
-
-# Update helm chart  
-make update-helm-chart
-
-# Commit and tag
-git add .
-git commit -m "fix: critical bug fix"
-VERSION=$(cat VERSION)
-git tag -a "v${VERSION}" -m "Hotfix v${VERSION}"
-git push origin hotfix/v1.2.4
-git push origin "v${VERSION}"
-
-# Merge back to main
-git checkout main
-git merge hotfix/v1.2.4
-git push origin main
-```
-
-## Configuration
-
-### Environment Variables
-
-The following can be overridden:
-
-```bash
-# Registry for Docker images
-REGISTRY=ghcr.io/upbothq
-
-# Image name
-IMAGE_NAME=upbot-operator
-
-# Version (usually read from VERSION file)
-VERSION=1.2.3
-```
-
-### Makefile Variables
-
-```makefile
-# Override in make commands
-make docker-build IMG=myregistry/myimage:mytag
-make docker-build REGISTRY=my-registry.com/myorg
-```
-
-## Troubleshooting
-
-### Version Mismatch
-
-If you see version consistency errors in CI:
-
-```bash
-make update-helm-chart
-git add dist/chart/Chart.yaml
-git commit -m "chore: sync helm chart version"
-```
-
-### Failed Docker Push
-
-Ensure you have proper permissions to push to the registry:
-
-```bash
-# For GitHub Container Registry
-echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
-```
-
-### Missing Build Args
-
-If Docker build fails with missing version info:
-
-```bash
-# Ensure you're using the make targets
-make docker-build  # instead of docker build directly
-```
-
-## Build Performance Optimization
-
-### Native ARM64 Builds
-
-The workflows are optimized to use native ARM64 runners when available:
-
-- **AMD64 builds:** `ubuntu-latest` (fast, native)
-- **ARM64 builds:** `ubuntu-24.04-arm64` (fast, native)
-- **Parallel execution:** Both architectures build simultaneously
-
-### Performance Comparison
-
-| Architecture | Build Time | Notes |
-|--------------|------------|-------|
-| **AMD64** | ~3-5 minutes | Native runner (`ubuntu-latest`) |
-| **ARM64** | ~3-5 minutes | Native runner (`ubuntu-24.04-arm64`) |
-| **Total** | ~5-7 minutes | Parallel execution |
-
-
-
-## Best Practices
-
-1. **Always use make targets** instead of direct docker/helm commands
-2. **Test locally** before pushing version changes
-3. **Use semantic versioning** correctly
-4. **Keep VERSION file in sync** with Helm chart
-5. **Create descriptive release notes** for GitHub releases
-6. **Test the full release process** in a fork first
-7. **Monitor build times** and use native runners when possible
